@@ -1,0 +1,76 @@
+{
+  "summary": "Full backend + frontend E2E test of CONCEPTOR P.A.C.T x BATNA app. Backend: 26 pytest cases across /api/meta, /api/analyze (structure, dynamic scoring, all 6 contexts, edge cases), /api/sessions CRUD, /api/ai/generate SSE. 23 passed. Frontend: landing + Learn accordion (P/A/C/T), 6-step builder navigation (tabs + Lanjut/Sebelumnya), input persistence, debounced leverage score (reached 71 with the prescribed rich input), all 6 result panels, ZOPA bar, concession ladder, copy-script toast, AI Coach streaming (works, output grows, SELESAI state), empty-form AI error toast, and reset. Core flows all work. Two real defects found: (1) SSE AI stream is hard-cut at exactly 60s by the public ingress so long generations are silently truncated mid-sentence with no done:true, (2) engine produces an incoherent (non-descending) concession ladder / inverted ZOPA bar when BATNA expected value exceeds the reality-capped anchor.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/ai/generate",
+        "issue": "Via public URL the SSE response is terminated at exactly 60.0s by the ingress/CDN: stream ends after ~7.1-7.4k chars with NO 'done:true' and no error event. Same request to localhost:8001 completes in 80s with 10.2k chars and done:true. User-visible effect: AI script/playbook is truncated mid-sentence while the UI header flips to 'SELESAI'. Fix by shortening generation (cap max_tokens / more compact prompt so it finishes <55s) or chunk the generation into multiple shorter requests. Reproduced 3/3 times for mode=script and objections.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "POST /api/analyze (engine.build_numbers)",
+        "issue": "When BATNA expected_value > reality-capped target, ladder is not descending. Repro: current_value=8.000.000, no market data, alternative value=60.000.000 prob=100 -> ladder = [anchor 10.5jt, target 9.5jt, compromise 35jt, walk-away 60jt]. Anchor/target end up BELOW the walk-away, compromise is above the anchor, and increase_pct shows +25% while the actual reservation is +650%. Frontend ZOPA bar then renders WALK-AWAY Rp 60jt on the left edge and ANCHOR Rp 10jt on the right (labels/positions inconsistent with values). Engine should either lift anchor/target above reservation, or bypass the reality cap / switch to an 'eksekusi BATNA' output when reservation > target.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/analyze",
+        "issue": "Unknown context string (e.g. 'bogus_ctx') is silently accepted and falls back to 'other' instead of a 422 — acceptable but should ideally be validated with an Enum/Literal."
+      },
+      {
+        "endpoint": "engine.score_batna",
+        "issue": "Dead code: runway_months is always set to None (the if-branch assigns None); either implement or drop the field."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AiPanel / renderMarkdown",
+        "issue": "AI output text is silently truncated mid-sentence (60s ingress cut) but the panel header shows 'SELESAI', so users believe the script is complete. Needs an explicit 'terpotong / coba lagi' state when the stream ends without done:true.",
+        "selector": "[data-testid=\"ai-output\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "AiPanel / renderMarkdown",
+        "issue": "Markdown blockquotes ('> ...') and horizontal rules ('---') are not handled, so raw '>' characters and '---' lines are printed as literal text in the AI output (visible in the very first block of every generated script).",
+        "selector": "[data-testid=\"ai-output\"]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Results / ZOPA bar",
+        "issue": "In the no-ZOPA case the bar labels are inconsistent: WALK-AWAY (Rp 60jt) sits at the left end while ANCHOR (Rp 10jt) sits at the right end, and the TARGET label lands close to the ANCHOR label. Symptom of the engine ordering bug above; the bar should be guarded when reservation > anchor.",
+        "selector": "[data-testid=\"numbers-panel\"]",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Results / numbers panel (desktop 1920 + mobile 390)",
+        "issues": ["No horizontal overflow on mobile (0px) and no severe text collision on the ZOPA bar in the normal case — layout OK", "Only overlap risk is the TARGET vs ANCHOR label pair when the two values are very close on the bar"]
+      }
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Fix 60s SSE truncation on /api/ai/generate (limit output length / max_tokens so generation completes under ~55s, or split into sequential shorter calls), and surface a 'stream terpotong' state in AiPanel when done:true never arrives.",
+    "Fix build_numbers so the concession ladder is always descending (anchor > target >= compromise >= reservation); handle reservation > capped target explicitly (e.g. force 'BATNA lebih baik, eksekusi alternatif' verdict) and guard the ZOPA bar rendering.",
+    "Handle '>' blockquote and '---' hr in AiPanel.renderMarkdown.",
+    "Optional: validate context with Literal/Enum; remove dead runway_months code."
+  ],
+  "critical_code_review_comments": [
+    "engine.build_numbers: reservation is derived from BATNA expected_value without any coupling to anchor/target, which lets the whole ladder invert. Compute anchor/target as max(reality_cap_value, reservation * 1.05) or branch to a BATNA-execution output.",
+    "server.py /api/ai/generate: no max_tokens/length guard and no timeout awareness for the 60s ingress limit; long streams die silently (StreamDone never reached).",
+    "api.js streamAi: calls onDone() when the reader closes even if no done:true event was received — cannot distinguish complete vs truncated output.",
+    "engine.py is 592 lines and mixes scoring, number engine, and copywriting; consider splitting scoring vs content builders as it grows."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "88% (23/26 pytest cases)", "frontend": "92% (all core flows pass; AI output truncation + markdown rendering gaps)"},
+  "seed_data_creation": "One session document created in Mongo collection pact_sessions via POST /api/sessions during tests (no auth/user data).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use BASE_URL from /app/frontend/.env (https://pact-solver-1.preview.emergentagent.com — differs from the URL quoted in the review request). Run backend suite: cd /app/backend && python -m pytest tests/backend_test.py -v (add -k 'not AiStream' for a fast run; AI tests take ~2 min). TestAiStream[script|objections] currently fail only because the public ingress cuts SSE at 60s — verify against http://localhost:8001 to isolate. TestEdgeCases::test_ladder_monotonic_when_batna_dominant documents the ladder inversion bug. Frontend flows verified with Playwright: pillar-toggle-{P,A,C,T}, step-* tabs, next-step-btn, input-current-value/p50/p75, metric-0-*, ach-0-*, timing-*, alt-0-*, builder-score/nav-leverage-score (reached 71), copy-script-btn toast, ai-mode-script, reset-btn (score back to 8). Clipboard 'Write permission denied' pageerror in headless Chromium is environmental, toast still fires.",
+  "rca_of_the_issue": "AI truncation: the Kubernetes/Cloudflare ingress enforces a 60s response ceiling; the stream is killed while LiteLLM is still emitting deltas, so StreamDone and the 'done:true' sentinel are never reached (confirmed 60.2s vs 80.4s locally). Ladder inversion: build_numbers derives target/anchor from base * reality-cap multipliers but derives reservation independently as max(base, batna.expected_value); when a dominant BATNA has EV far above base * cap, reservation exceeds anchor and the 4-step ladder plus ZOPA bar become logically inconsistent."
+}

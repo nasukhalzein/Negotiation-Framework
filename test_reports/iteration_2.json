@@ -1,0 +1,37 @@
+{
+  "summary": "Retest of the 4 fixes from iteration 1 + short regression. Backend: 34/34 pytest cases pass (added TestLadderOrdering with 6 BATNA/expense/offer-only combinations + batna_superior flag/note assertions, and hardened TestAiStream with elapsed<55s + P.A.C.T label checks). FIX 1 verified: ladder is always descending (anchor > target >= compromise >= reservation) in every combination tried, batna_superior=true and batna_note filled when reservation > capped target, capped=false in that branch. FIX 2 verified: /api/ai/generate mode=script finished in ~35s (backend) / 42.3s (browser) and mode=objections ~37s, both emitting done:true, no truncation; script output uses Performance/Achievement/Comparison/Timing labels, no 'Problem'. FIX 3 verified in [data-testid=ai-output]: 0 literal '---' lines, 0 lines starting with '>', 0 literal '**' — rendered as 6-7 .hairline hr elements, 9-17 blockquotes, 7-15 headings; header stayed 'SELESAI' and ai-truncated-note absent (truncated path is implemented via onDone(false) but could not be triggered since streams now complete). FIX 4 verified on the no-ZOPA case (current 8jt, BATNA 60jt/100%/aktif): markers ordered WALK-AWAY(60jt, left 81.7%) < TARGET(63jt, 86.6%) < ANCHOR(68.5jt, 95.5%), no red ZOPA band rendered, caption = 'ZOPA tidak terbentuk pada angka ini', batna-superior-note visible, no desktop overlap and no horizontal overflow (0px) at 1920 or 390. REGRESSION: full builder input -> leverage 71, all 6 result panels visible, copy-script toast fires, reset clears inputs and score back to 8.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "engine.build_script", "issue": "Empty achievement rows are not filtered: the frontend always sends one blank achievement, so top_ach.title = '' and the script body renders 'Achievement — .' (visible in script-panel). Filter achievements/metrics by non-empty title/label like alternatives already do."},
+      {"endpoint": "POST /api/analyze", "issue": "Unknown context string still accepted silently (falls back to 'other') instead of 422 — carried over from iteration 1."},
+      {"endpoint": "engine.score_batna", "issue": "Dead code: runway_months is always None — carried over from iteration 1."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "App.js onCopy / AiPanel ai-copy-btn", "issue": "navigator.clipboard.writeText() has no .catch(); in environments where clipboard write is denied it produces an uncaught NotAllowedError (the CRA dev-server error overlay then covers the page and blocks clicks). Wrap in try/catch or add .catch(() => toast.error(...)) with a textarea fallback.", "selector": "[data-testid=\"copy-script-btn\"], [data-testid=\"ai-copy-btn\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Results ZOPA bar @390 mobile", "issues": ["WALK-AWAY and ANCHOR labels are both drawn above the line and their boxes overlap horizontally (251-321 vs 290-360px) when the two values are within ~15% of each other (no-ZOPA case). Consider staggering the 3rd label to a different vertical offset or shrinking label width on <sm screens. Desktop 1920 has no overlap."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml", "/app/test_reports/pytest/pytest_ai.xml"],
+  "action_items": [
+    "Optional/minor: filter out blank achievement rows in build_script so 'Achievement — .' never renders.",
+    "Optional/minor: add .catch() around navigator.clipboard.writeText in App.js and AiPanel.js.",
+    "Optional/minor: stagger ZOPA marker labels on mobile to avoid WALK-AWAY/ANCHOR label overlap when values are close."
+  ],
+  "critical_code_review_comments": [
+    "engine.build_numbers batna_superior branch is correct and now recomputes anchor from the lifted target; keep the invariant covered by TestLadderOrdering when touching cap_map.",
+    "AiPanel truncated state depends on streamAi calling onDone(false); since generations now finish in ~35-42s the branch is untested at runtime — keep the 850-word/2600-token cap when changing prompts, otherwise the 60s ingress cut returns."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (34/34 pytest cases)", "frontend": "100% of tested flows (4 fixes + regression all pass; only cosmetic mobile label overlap + clipboard catch missing)"},
+  "seed_data_creation": "One session document in Mongo collection pact_sessions via POST /api/sessions (test fixture).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "BASE_URL = https://pact-solver-1.preview.emergentagent.com (from /app/frontend/.env). Run: cd /app/backend && python -m pytest tests/backend_test.py -v (use -k 'not AiStream' for a 3s run; AI tests take ~70s). New class TestLadderOrdering covers 6 BATNA/expense/offer-only combos + batna_superior flag. AI test asserts done:true, elapsed<55s and P.A.C.T labels for mode=script. Playwright: builder testids step-{context,performance,achievement,comparison,timing,batna}, input-current-value/p50/p75, metric-0-*, ach-0-*, timing-*, alt-0-*, see-result-btn, copy-script-btn, reset-btn, ai-mode-{script,objections,email,roleplay}, ai-output, ai-truncated-note. Clipboard write is denied in headless Chromium -> triggers the CRA error overlay which blocks later clicks; do clipboard clicks last in a script.",
+  "rca_of_the_issue": "All four iteration-1 defects are resolved: (1) build_numbers now lifts target/anchor above reservation (target = reservation*1.05) when BATNA EV exceeds the reality cap, keeping the ladder monotonic; (2) max_tokens=2600 + '850 kata' instruction brings generation to ~35-42s, well under the 60s ingress ceiling, so StreamDone/done:true is always reached; (3) renderMarkdown handles '---' as .hairline and '> ' as <blockquote>; (4) ZopaBar only paints the red band when zopa.exists and marker positions now follow correctly-ordered values."
+}

@@ -1,0 +1,105 @@
+{
+  "theme": "dark",
+  "typography": {
+    "headings": {
+      "font": "Clash Display, sans-serif",
+      "weights": ["600", "700"],
+      "usage": "H1-H4 headings for clear, bold impact",
+      "instruction": "Use tightly tracked headings (tracking-tighter). Avoid generic sans."
+    },
+    "body": {
+      "font": "IBM Plex Sans, sans-serif",
+      "weights": ["400", "500"],
+      "usage": "Main interface text, labels, paragraphs",
+      "instruction": "Standard body font. Maintain high legibility."
+    },
+    "monospace": {
+      "font": "JetBrains Mono, monospace",
+      "weights": ["400", "500", "700"],
+      "usage": "Eyebrows, numbers, leverage scores, metrics, code snippets",
+      "instruction": "Crucial for the 'CONCEPTOR' tactical identity. Use for all numeric outputs, form labels, and data points."
+    }
+  },
+  "colors": {
+    "background": "#0a0a0a",
+    "surface": "#121212",
+    "surface_elevated": "#1a1a1a",
+    "primary": "#e33333",
+    "primary_hover": "#ff4d4d",
+    "text_primary": "#ffffff",
+    "text_secondary": "#a3a3a3",
+    "border": "#262626",
+    "success": "#10b981",
+    "warning": "#f59e0b",
+    "danger": "#ef4444",
+    "instruction": "Maintain a 'Tactical Minimalism' or 'Swiss Brutalist' dark mode look. 95% monochrome, 5% high contrast red."
+  },
+  "visual enhancers": {
+    "borders": "1px solid #262626. Sharp corners (rounded-none) or very subtle (rounded-sm/max 4px).",
+    "shadows": "Minimal. Use border definition instead of box-shadow in dark mode. For elevated states, use intense but small red glow shadow-[0_0_15px_rgba(227,51,51,0.2)].",
+    "textures": "Use background grain or technical grid lines (SVG pattern) to make it feel like a command center.",
+    "hover_states": "Red border highlights, text turns pure white, subtle -translate-y-[1px]."
+  },
+  "component name": "Shadcn/UI components (heavily customized for Brutal/Tactical look)",
+  "component_path": "/app/frontend/src/components/ui/",
+  "grids": {
+    "dashboard": "High Density Grid (grid-cols-1 md:grid-cols-4 lg:grid-cols-12) for the leverage score and BATNA output.",
+    "bento": "Asymmetric Bento-style layout for educational sections and results dashboard.",
+    "rules": "Every pixel must be utilized in dashboard mode. Use h-full on children to ensure they stretch."
+  },
+  "layouts": {
+    "spacing": "Generous internal padding (p-6, p-8) on cards to create breathing room against sharp borders. Gap-4 to gap-8 for bento.",
+    "navigation": "Pill-style or tab-style top navigation (Leverage Score / 4 Pilar / BATNA Builder / Script Generator / Pre-Nego). Active state gets a red bottom border or red background."
+  },
+  "motion": {
+    "transitions": "Use specific properties for transitions (e.g. transition: transform 0.2s ease, opacity 0.2s ease).",
+    "micro_interactions": "Hover states on all interactive elements, subtle scale or border color changes.",
+    "data_reveal": "Staggered entrance animations for leverage score and pillar breakdowns."
+  },
+  "accessibility": {
+    "contrast": "Ensure pure white text on black background for APCA compliance. Interactive elements must have 3:1 minimum against adjacent colors.",
+    "focus": "focus:ring-2 focus:ring-red-500 focus:outline-none for all interactive elements.",
+    "reduced_motion": "Respect prefers-reduced-motion for all animations."
+  },
+  "media": {
+    "images": "Not primarily an image-heavy site. Rely on typography, grid lines, and monochromatic data visualization.",
+    "icons": "Use Phosphor Icons (sharp/regular) or Lucide Icons (stroke-width: 1.5)."
+  },
+  "3d libraries": {
+    "recommendation": "Not strictly necessary, but Recharts should be used for data visualization (radar charts for 4 pillars, bar charts for leverage)."
+  },
+  "image urls": {
+    "background_texture": {
+      "url": "",
+      "description": "Optional subtle noise/grain texture overlaid on the dark background.",
+      "category": "background"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Build a React (vite) UI with heavily customized Tailwind styles focusing on the 'CONCEPTOR' brand (Black background, Red accents, Monospace eyebrows).",
+    "Ensure all copy is in Indonesian (Bahasa Indonesia).",
+    "Create a context picker at the start (salary raise, job offer, business deal, custom).",
+    "Build a step-by-step form for P.A.C.T. (Performance, Achievement, Comparison, Timing) metrics and BATNA builder.",
+    "Implement a dashboard showing Leverage Score, Pillar breakdown, Anchor number, Target, Walk-away, and ZOPA.",
+    "Add a mock AI script streaming view for the negotiation script.",
+    "Do NOT use transparent backgrounds for dropdowns or modals; always use #121212 or #1a1a1a.",
+    "Use JetBrains Mono for all data/metrics/scores to emphasize the technical nature.",
+    "Do not round corners excessively; stick to `rounded-none` or `rounded-sm` (max 4px).",
+    "Implement the UI in .js files as it's a standard React project.",
+    "Include `data-testid` on all interactive elements.",
+    "Add a Pre-negotiation checklist section."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy, but keep surfaces mostly flat (brutalist).",
+    "You MUST NOT apply universal transition (e.g. transition: all).",
+    "You MUST NOT center align the app container. Left-align text for a clinical, tactical feel.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions.",
+    "Use 2-3x more spacing than feels comfortable.",
+    "Use sonner for toasts (located in /app/frontend/src/components/ui/sonner.jsx or .tsx)."
+  ]
+}
