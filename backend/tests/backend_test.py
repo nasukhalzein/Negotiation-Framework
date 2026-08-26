@@ -1,6 +1,9 @@
-"""Backend tests for PACT Negotiation Engine API."""
-import os
+"""CONCEPTOR backend regression tests (bilingual engine, 3 contexts, per-context timing)."""
 import json
+import os
+import re
+import time
+
 import pytest
 import requests
 from dotenv import dotenv_values
@@ -10,317 +13,275 @@ base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_AP
 if not base_url:
     raise RuntimeError("REACT_APP_BACKEND_URL missing")
 BASE_URL = base_url.rstrip("/")
+UA = {"User-Agent": "conceptor-pytest/1.0", "Content-Type": "application/json"}
+
+CONTEXTS = ["salary_raise", "job_offer", "business_deal"]
+
+# Indonesian markers that must never appear in EN output
+ID_WORDS = [" Anda", " yang ", " dengan ", " saya ", " adalah ", " untuk ", " tidak ",
+            " pekan", " bulan", "Rencana", " angka ", " harga "]
+# English markers that must never appear in ID output
+EN_WORDS = [" your ", " the ", " with ", " and ", " weeks", " months", " number ", " price "]
 
 
 @pytest.fixture(scope="session")
-def api():
+def client():
     s = requests.Session()
-    s.headers.update({"Content-Type": "application/json", "User-Agent": "pytest-qa/1.0"})
+    s.headers.update(UA)
     return s
 
 
-def base_payload(**kw):
-    p = {
-        "context": "salary_raise",
+def full_payload(context="business_deal", lang="id", timing=None):
+    return {
+        "lang": lang,
+        "context": context,
         "role": "Senior Data Analyst",
         "tenure_months": 24,
         "currency": "IDR",
-        "current_value": 14000000,
-        "market_p50": 18000000,
-        "market_p75": 24000000,
-        "metrics": [],
-        "achievements": [],
-        "timing_factors": [],
-        "alternatives": [],
+        "current_value": 40_000_000,
+        "offer_value": 30_000_000 if context != "salary_raise" else None,
+        "market_p50": 35_000_000,
+        "market_p75": 60_000_000,
+        "metrics": [{"label": "Retensi klien", "baseline": 70, "result": 88,
+                     "unit": "%", "period": "Q1 2026", "impact_value": 500_000_000}],
+        "achievements": [{"title": "Membangun dashboard revenue", "impact_value": 200_000_000,
+                          "beyond_scope": True, "verifiable": True}],
+        "internal_band_known": True,
+        "scope_growth_note": "Menambah dua tim baru",
+        "timing_factors": timing if timing is not None else ["client_deadline", "inbound_lead"],
+        "alternatives": [{"label": "Klien lain", "kind": "other", "value": 45_000_000,
+                          "probability": 60, "weeks_to_activate": 3, "is_active": True}],
+        "monthly_expense": 15_000_000,
+        "relationship_importance": 3,
     }
-    p.update(kw)
-    return p
 
 
-FULL_METRIC = {"label": "Churn rate", "baseline": 8, "result": 5, "unit": "%",
-               "period": "Q1-Q2 2026", "impact_value": 400000000}
-FULL_ACH = {"title": "Bangun dashboard retensi", "impact_value": 150000000,
-            "beyond_scope": True, "verifiable": True}
-FULL_ALT = {"label": "Offer PT Maju", "kind": "offer", "value": 22000000,
-            "probability": 70, "weeks_to_activate": 4, "is_active": True}
+def collect_strings(obj, out=None):
+    if out is None:
+        out = []
+    if isinstance(obj, str):
+        out.append(obj)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            collect_strings(v, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            collect_strings(v, out)
+    return out
 
 
-# ---------- Module: /api/meta ----------
-class TestMeta:
-    def test_meta(self, api):
-        r = api.get(f"{BASE_URL}/api/meta")
+# ---------------- health / meta ----------------
+class TestHealthMeta:
+    def test_root(self, client):
+        r = client.get(f"{BASE_URL}/api/")
+        assert r.status_code == 200
+        assert "message" in r.json()
+
+    @pytest.mark.parametrize("lang", ["id", "en"])
+    def test_meta_shape(self, client, lang):
+        r = client.get(f"{BASE_URL}/api/meta", params={"lang": lang})
         assert r.status_code == 200
         d = r.json()
-        keys = [c["key"] for c in d["contexts"]]
-        for k in ["salary_raise", "job_offer", "business_deal", "freelance_rate", "vendor", "other"]:
-            assert k in keys
-        tf = {t["key"]: t["weight"] for t in d["timing_factors"]}
-        assert tf["hiring_freeze"] < 0 and tf["recent_win"] > 0
-        assert all("label" in c and "counterpart" in c for c in d["contexts"])
+        assert [c["key"] for c in d["contexts"]] == CONTEXTS
+        tf = d["timing_factors"]
+        assert isinstance(tf, dict)
+        assert set(tf.keys()) == set(CONTEXTS)
+        for ctx in CONTEXTS:
+            assert len(tf[ctx]) == 8, f"{ctx} has {len(tf[ctx])} timing factors"
+            for f in tf[ctx]:
+                assert f["label"] and isinstance(f["weight"], int)
+
+    def test_meta_labels_localised(self, client):
+        idl = client.get(f"{BASE_URL}/api/meta", params={"lang": "id"}).json()
+        enl = client.get(f"{BASE_URL}/api/meta", params={"lang": "en"}).json()
+        assert idl["contexts"][0]["label"] != enl["contexts"][0]["label"]
+        assert enl["contexts"][2]["label"] == "Business / Client Deal"
+        assert enl["timing_factors"]["business_deal"][0]["label"].startswith("The client")
 
 
-# ---------- Module: /api/analyze structure ----------
-class TestAnalyzeStructure:
-    def test_full_payload_structure(self, api):
-        payload = base_payload(
-            metrics=[FULL_METRIC], achievements=[FULL_ACH],
-            timing_factors=["review_cycle_near", "recent_win"],
-            alternatives=[FULL_ALT], internal_band_known=True,
-            scope_growth_note="Nambah 2 anak tim",
-        )
-        r = api.post(f"{BASE_URL}/api/analyze", json=payload)
-        assert r.status_code == 200, r.text
+# ---------------- analyze: languages ----------------
+class TestLanguage:
+    def test_en_has_no_indonesian(self, client):
+        r = client.post(f"{BASE_URL}/api/analyze", json=full_payload(lang="en"))
+        assert r.status_code == 200
         d = r.json()
-        for k in ["leverage_score", "tier", "pact", "batna", "impact", "numbers",
-                  "gaps", "risks", "script", "checklist", "readiness_pct"]:
-            assert k in d, f"missing {k}"
-        assert 0 <= d["leverage_score"] <= 100
-        p = d["pact"]
-        for pil in "PACT":
-            assert 0 <= p[pil] <= 25, f"{pil}={p[pil]} out of range"
-        assert p["total"] == p["P"] + p["A"] + p["C"] + p["T"]
-        b = d["batna"]
-        assert b["best"]["expected_value"] == round(22000000 * 0.7)
+        assert d["lang"] == "en"
+        blob = " ".join(collect_strings({k: v for k, v in d.items()
+                                        if k not in ("script",)})) + " "
+        # script contains user-entered Indonesian data, check only engine copy
+        s = d["script"]
+        blob += " ".join([s["ask"], s["silence_rule"], s["closing"], s["counterpart"]] +
+                         [o["objection"] for o in s["objections"]]) + " "
+        leaks = [w for w in ID_WORDS if w in blob]
+        assert not leaks, f"Indonesian leaked into EN output: {leaks}"
+        assert d["tier"]["label"] in ("Dominant Position", "Strong Position",
+                                      "Still Building", "Not Ready Yet")
+        assert d["context"] == "Business / Client Deal"
+        assert d["numbers"]["ladder"][0]["label"] == "Anchor — your opening number"
+
+    def test_id_has_no_english(self, client):
+        r = client.post(f"{BASE_URL}/api/analyze", json=full_payload(lang="id"))
+        assert r.status_code == 200
+        d = r.json()
+        s = d["script"]
+        blob = " ".join([d["tier"]["verdict"], d["impact"]["statement"], s["ask"],
+                         s["silence_rule"], s["closing"], s["counterpart"]] +
+                        [g["action"] for g in d["gaps"]] +
+                        [x["note"] for x in d["numbers"]["ladder"]]) + " "
+        leaks = [w for w in EN_WORDS if w in blob]
+        assert not leaks, f"English leaked into ID output: {leaks}"
+        assert d["context"] == "Deal Bisnis / Klien"
+
+    def test_en_batna_note_and_staged_plan_language(self, client):
+        p = full_payload(lang="en", context="business_deal")
+        p["alternatives"][0]["value"] = 200_000_000
+        p["alternatives"][0]["probability"] = 100
+        d = client.post(f"{BASE_URL}/api/analyze", json=p).json()
         n = d["numbers"]
-        assert n["available"] is True
-        assert n["anchor"] > n["target"] >= n["compromise"] >= n["reservation"], n
-        assert "zopa" in n and set(["low", "high", "exists"]) <= set(n["zopa"])
-        assert len(n["ladder"]) == 4
-        assert isinstance(n["non_monetary"], list) and len(n["non_monetary"]) >= 3
-        sc = d["script"]
-        assert all(k in sc for k in ["opening", "body", "ask", "silence_rule", "objections", "closing"])
-        assert len(sc["objections"]) >= 4
-        assert isinstance(d["checklist"], list) and len(d["checklist"]) >= 5
-        # high leverage expected
-        assert d["leverage_score"] > 55, f"leverage too low: {d['leverage_score']}"
+        assert n["batna_superior"] is True
+        assert n["batna_note"] and "Your best alternative" in n["batna_note"]
+        assert d["batna"]["tier"].startswith(("Dominant", "Strong", "Moderate", "Weak"))
 
-    def test_reality_cap_salary_raise(self, api):
-        payload = base_payload(market_p50=40000000, market_p75=60000000,
-                               metrics=[FULL_METRIC], achievements=[FULL_ACH],
-                               alternatives=[FULL_ALT],
-                               timing_factors=["review_cycle_near", "recent_win", "company_growing"])
-        d = api.post(f"{BASE_URL}/api/analyze", json=payload).json()
-        n = d["numbers"]
-        assert n["target"] <= 14000000 * 1.62, n["target"]
-        assert n["capped"] is True
-        assert n["staged_plan"]
-
-
-# ---------- Module: dynamic scoring behaviour ----------
-class TestDynamicScoring:
-    def _score(self, api, **kw):
-        r = api.post(f"{BASE_URL}/api/analyze", json=base_payload(**kw))
-        assert r.status_code == 200, r.text
-        return r.json()
-
-    def test_metrics_increase_p(self, api):
-        low = self._score(api)
-        high = self._score(api, metrics=[FULL_METRIC])
-        assert high["pact"]["P"] > low["pact"]["P"]
-
-    def test_achievements_increase_a(self, api):
-        low = self._score(api)
-        high = self._score(api, achievements=[FULL_ACH])
-        assert high["pact"]["A"] > low["pact"]["A"]
-
-    def test_negative_timing_lowers_t(self, api):
-        pos = self._score(api, timing_factors=["review_cycle_near", "recent_win"])
-        neg = self._score(api, timing_factors=["hiring_freeze", "recent_miss"])
-        assert neg["pact"]["T"] < pos["pact"]["T"]
-        assert neg["leverage_score"] < pos["leverage_score"]
-
-    def test_batna_alternative_raises_score_and_reservation(self, api):
-        none_alt = self._score(api)
-        with_alt = self._score(api, alternatives=[FULL_ALT])
-        assert with_alt["batna"]["score"] > none_alt["batna"]["score"]
-        assert with_alt["batna"]["tier"] != none_alt["batna"]["tier"]
-        # reservation rises because expected_value 15.4M > 14M base
-        assert with_alt["numbers"]["reservation"] > none_alt["numbers"]["reservation"]
-
-    def test_comparison_pillar_reacts_to_market_data(self, api):
-        no_mkt = self._score(api, market_p50=None, market_p75=None)
-        with_mkt = self._score(api, internal_band_known=True, scope_growth_note="scope naik")
-        assert with_mkt["pact"]["C"] > no_mkt["pact"]["C"]
-
-    def test_reservation_never_below_current(self, api):
-        d = self._score(api, alternatives=[{**FULL_ALT, "value": 5000000}])
-        assert d["numbers"]["reservation"] >= 14000000
-
-
-# ---------- Module: all contexts ----------
-class TestContexts:
-    @pytest.mark.parametrize("ctx", ["salary_raise", "job_offer", "business_deal",
-                                     "freelance_rate", "vendor", "other"])
-    def test_context_ok(self, api, ctx):
-        r = api.post(f"{BASE_URL}/api/analyze", json=base_payload(
-            context=ctx, metrics=[FULL_METRIC], alternatives=[FULL_ALT]))
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d["numbers"]["available"] is True
-        assert d["numbers"]["non_monetary"]
-        assert d["script"]["counterpart"]
-
-    def test_non_monetary_and_counterpart_differ(self, api):
-        seen_nm, seen_cp = {}, {}
-        for ctx in ["salary_raise", "job_offer", "business_deal", "freelance_rate", "vendor", "other"]:
-            d = api.post(f"{BASE_URL}/api/analyze", json=base_payload(context=ctx)).json()
-            seen_nm[ctx] = tuple(d["numbers"]["non_monetary"])
-            seen_cp[ctx] = d["script"]["counterpart"]
-        assert len(set(seen_nm.values())) == 6, seen_nm
-        assert len(set(seen_cp.values())) >= 4, seen_cp
-
-
-# ---------- Module: edge cases ----------
-class TestEdgeCases:
-    def test_empty_payload(self, api):
-        r = api.post(f"{BASE_URL}/api/analyze", json={})
-        assert r.status_code == 200, r.text
-        d = r.json()
+    def test_en_no_base_reason(self, client):
+        p = full_payload(lang="en")
+        p["current_value"] = None
+        p["offer_value"] = None
+        d = client.post(f"{BASE_URL}/api/analyze", json=p).json()
         assert d["numbers"]["available"] is False
-        assert d["numbers"].get("reason")
-        assert d["leverage_score"] >= 0
-        assert d["script"]["ask"]
-        assert d["gaps"]
+        assert "No base number" in d["numbers"]["reason"]
 
-    def test_zopa_absent_when_batna_huge(self, api):
-        d = api.post(f"{BASE_URL}/api/analyze", json=base_payload(
-            current_value=8000000, market_p50=None, market_p75=None,
-            alternatives=[{**FULL_ALT, "value": 60000000, "probability": 100}])).json()
-        assert d["numbers"]["zopa"]["exists"] is False, d["numbers"]["zopa"]
-        assert any("ZOPA" in x["title"] for x in d["risks"])
-
-    def test_ladder_monotonic_when_batna_dominant(self, api):
-        """Reservation from a dominant BATNA must not exceed anchor/target (ladder must stay ordered)."""
-        d = api.post(f"{BASE_URL}/api/analyze", json=base_payload(
-            current_value=8000000, market_p50=None, market_p75=None,
-            alternatives=[{**FULL_ALT, "value": 60000000, "probability": 100}])).json()
-        n = d["numbers"]
-        vals = [s["value"] for s in n["ladder"]]
-        assert vals == sorted(vals, reverse=True), f"ladder not descending: {vals}"
-
-    def test_invalid_context_falls_back(self, api):
-        r = api.post(f"{BASE_URL}/api/analyze", json=base_payload(context="bogus_ctx"))
-        assert r.status_code in (200, 422), r.text
-        if r.status_code == 200:
-            assert r.json()["numbers"]["available"] is True
-
-    def test_bad_types_rejected(self, api):
-        r = api.post(f"{BASE_URL}/api/analyze", json={"current_value": "abc"})
-        assert r.status_code == 422
-
-    def test_metric_zero_baseline_no_crash(self, api):
-        r = api.post(f"{BASE_URL}/api/analyze", json=base_payload(
-            metrics=[{"label": "New signups", "baseline": 0, "result": 100, "unit": "user"}]))
-        assert r.status_code == 200, r.text
+    def test_id_no_base_reason(self, client):
+        p = full_payload(lang="id")
+        p["current_value"] = None
+        p["offer_value"] = None
+        d = client.post(f"{BASE_URL}/api/analyze", json=p).json()
+        assert d["numbers"]["available"] is False
+        assert "Angka dasar belum diisi" in d["numbers"]["reason"]
 
 
-# ---------- Module: FIX 1 - ladder ordering / batna_superior ----------
-class TestLadderOrdering:
-    CASES = {
-        "batna_far_above_cap": dict(current_value=8000000, market_p50=None, market_p75=None,
-                                    alternatives=[{**FULL_ALT, "value": 60000000, "probability": 100}]),
-        "batna_slightly_below_target": dict(current_value=14000000,
-                                            alternatives=[{**FULL_ALT, "value": 20000000, "probability": 90}]),
-        "huge_monthly_expense": dict(current_value=8000000, market_p50=None, market_p75=None,
-                                     monthly_expense=30000000, alternatives=[]),
-        "offer_only_no_current": dict(current_value=None, offer_value=10000000, market_p50=None, market_p75=None,
-                                      alternatives=[{**FULL_ALT, "value": 45000000, "probability": 100}]),
-        "job_offer_ctx_batna_dominant": dict(context="job_offer", current_value=12000000, market_p50=None,
-                                             market_p75=None,
-                                             alternatives=[{**FULL_ALT, "value": 50000000, "probability": 100}]),
-        "vendor_ctx_batna_dominant": dict(context="vendor", current_value=100000000, market_p50=None, market_p75=None,
-                                          alternatives=[{**FULL_ALT, "value": 400000000, "probability": 100}]),
-    }
+# ---------------- analyze: contexts ----------------
+class TestContexts:
+    def test_contexts_differ(self, client):
+        out = {}
+        for ctx in CONTEXTS:
+            timing = {"salary_raise": ["review_cycle_near"], "job_offer": ["competing_offer"],
+                      "business_deal": ["client_deadline"]}[ctx]
+            d = client.post(f"{BASE_URL}/api/analyze", json=full_payload(ctx, "id", timing)).json()
+            out[ctx] = d
+            assert d["context_key"] == ctx
+            assert len(d["script"]["objections"]) >= 4
+        openings = {c: out[c]["script"]["opening"] for c in CONTEXTS}
+        assert len(set(openings.values())) == 3, openings
+        objs = {c: json.dumps(out[c]["script"]["objections"][:4]) for c in CONTEXTS}
+        assert len(set(objs.values())) == 3
+        nonmon = {c: json.dumps(out[c]["numbers"]["non_monetary"]) for c in CONTEXTS}
+        assert len(set(nonmon.values())) == 3
+        cps = {c: out[c]["script"]["counterpart"] for c in CONTEXTS}
+        assert len(set(cps.values())) == 3
 
-    @pytest.mark.parametrize("name", list(CASES))
-    def test_ladder_always_descending(self, api, name):
-        r = api.post(f"{BASE_URL}/api/analyze", json=base_payload(**self.CASES[name]))
-        assert r.status_code == 200, r.text
-        n = r.json()["numbers"]
-        assert n["available"] is True, n
-        vals = [s["value"] for s in n["ladder"]]
-        assert vals == sorted(vals, reverse=True), f"{name}: ladder not descending {vals}"
-        assert n["anchor"] > n["target"] >= n["compromise"] >= n["reservation"], f"{name}: {n}"
+    def test_unknown_context_fallback(self, client):
+        r = client.post(f"{BASE_URL}/api/analyze", json=full_payload("freelance_rate", "id"))
+        assert r.status_code == 200
+        assert r.json()["context_key"] == "salary_raise"
 
-    def test_batna_superior_flag_and_note(self, api):
-        d = api.post(f"{BASE_URL}/api/analyze",
-                     json=base_payload(**self.CASES["batna_far_above_cap"])).json()
-        n = d["numbers"]
-        assert n["batna_superior"] is True, n
-        assert n["batna_note"] and isinstance(n["batna_note"], str) and len(n["batna_note"]) > 30
-        assert n["capped"] is False
-        assert n["reservation"] >= 60000000
-        assert n["increase_pct"] > 0
-
-    def test_normal_case_not_batna_superior(self, api):
-        d = api.post(f"{BASE_URL}/api/analyze", json=base_payload(
-            metrics=[FULL_METRIC], achievements=[FULL_ACH], alternatives=[FULL_ALT])).json()
-        n = d["numbers"]
-        assert n["batna_superior"] is False
-        assert n["batna_note"] is None
+    def test_cross_context_timing_key_ignored(self, client):
+        base = full_payload("salary_raise", "id", [])
+        t0 = client.post(f"{BASE_URL}/api/analyze", json=base).json()["pact"]["T"]
+        cross = full_payload("salary_raise", "id", ["client_deadline"])
+        t1 = client.post(f"{BASE_URL}/api/analyze", json=cross).json()["pact"]["T"]
+        assert t0 == t1, "timing key from another context changed T score"
+        own = full_payload("salary_raise", "id", ["review_cycle_near"])
+        t2 = client.post(f"{BASE_URL}/api/analyze", json=own).json()["pact"]["T"]
+        assert t2 > t0
 
 
-# ---------- Module: sessions ----------
-class TestSessions:
-    def test_save_and_fetch(self, api):
-        payload = base_payload(metrics=[FULL_METRIC], alternatives=[FULL_ALT])
-        analysis = api.post(f"{BASE_URL}/api/analyze", json=payload).json()
-        r = api.post(f"{BASE_URL}/api/sessions", json={"input": payload, "analysis": analysis})
-        assert r.status_code == 200, r.text
+# ---------------- regression ----------------
+class TestRegression:
+    @pytest.mark.parametrize("ctx", CONTEXTS)
+    @pytest.mark.parametrize("alt_value", [0, 45_000_000, 500_000_000])
+    def test_ladder_monotonic(self, client, ctx, alt_value):
+        p = full_payload(ctx, "id", [])
+        p["alternatives"][0]["value"] = alt_value
+        n = client.post(f"{BASE_URL}/api/analyze", json=p).json()["numbers"]
+        vals = [x["value"] for x in n["ladder"]]
+        assert vals[0] > vals[1], f"anchor<=target {vals}"
+        assert vals[1] >= vals[2] >= vals[3], f"ladder not descending {vals}"
+        assert n["anchor"] == vals[0] and n["target"] == vals[1]
+        assert n["compromise"] == vals[2] and n["reservation"] == vals[3]
+
+    def test_empty_labels_ignored_in_scores_and_script(self, client):
+        p = full_payload("salary_raise", "id", [])
+        p["metrics"] = [{"label": "  ", "baseline": 10, "result": 20, "unit": "", "period": "",
+                         "impact_value": 100}]
+        p["achievements"] = [{"title": "", "impact_value": 5_000_000,
+                              "beyond_scope": True, "verifiable": True}]
+        d = client.post(f"{BASE_URL}/api/analyze", json=p).json()
+        assert d["pact"]["A"] == 0, "empty achievement title contributed to A"
+        assert d["pact"]["quantified_metrics"] == 0
+        body = " ".join(d["script"]["body"])
+        assert "Achievement — ." not in body
+        assert "Performance — ." not in body
+        assert "Performance —  ." not in body
+
+    def test_persistence_session_roundtrip(self, client):
+        p = full_payload()
+        analysis = client.post(f"{BASE_URL}/api/analyze", json=p).json()
+        r = client.post(f"{BASE_URL}/api/sessions", json={"input": p, "analysis": analysis})
+        assert r.status_code == 200
         sid = r.json()["id"]
-        assert isinstance(sid, str) and len(sid) > 0
-        g = api.get(f"{BASE_URL}/api/sessions/{sid}")
+        g = client.get(f"{BASE_URL}/api/sessions/{sid}")
         assert g.status_code == 200
         doc = g.json()
         assert "_id" not in doc
-        assert doc["id"] == sid
-        assert doc["input"]["current_value"] == 14000000
+        assert doc["input"]["context"] == p["context"]
         assert doc["analysis"]["leverage_score"] == analysis["leverage_score"]
 
-    def test_unknown_session_404(self, api):
-        r = api.get(f"{BASE_URL}/api/sessions/nope1234")
-        assert r.status_code == 404
+    def test_session_404(self, client):
+        assert client.get(f"{BASE_URL}/api/sessions/doesnotexist").status_code == 404
+
+    def test_score_increases_with_data(self, client):
+        empty = {"lang": "id", "context": "business_deal"}
+        lo = client.post(f"{BASE_URL}/api/analyze", json=empty).json()["leverage_score"]
+        hi = client.post(f"{BASE_URL}/api/analyze", json=full_payload()).json()["leverage_score"]
+        assert hi > lo
 
 
-# ---------- Module: AI streaming ----------
-class TestAiStream:
-    @pytest.mark.parametrize("mode", ["script", "objections"])
-    def test_stream(self, api, mode):
-        payload = base_payload(metrics=[FULL_METRIC], achievements=[FULL_ACH],
-                               alternatives=[FULL_ALT], timing_factors=["review_cycle_near"])
-        analysis = api.post(f"{BASE_URL}/api/analyze", json=payload).json()
-        import time
-        t0 = time.time()
-        r = requests.post(f"{BASE_URL}/api/ai/generate",
-                          json={"input": payload, "analysis": analysis, "mode": mode},
-                          headers={"User-Agent": "pytest-qa/1.0"},
-                          stream=True, timeout=180)
-        assert r.status_code == 200, r.text
-        text, done, err = "", False, None
-        for line in r.iter_lines(decode_unicode=True):
-            if not line or not line.startswith("data: "):
-                continue
-            ev = json.loads(line[6:])
-            if "delta" in ev:
-                text += ev["delta"]
-            if ev.get("done"):
-                done = True
-                break
-            if "error" in ev:
-                err = ev["error"]
-                break
-        elapsed = time.time() - t0
-        assert err is None, f"AI stream error: {err}"
-        assert done is True, f"stream did not finish with done:true (elapsed={elapsed:.1f}s, chars={len(text)})"
-        assert elapsed < 55, f"stream took {elapsed:.1f}s (>55s risks ingress cut)"
+# ---------------- AI ----------------
+class TestAi:
+    @pytest.mark.parametrize("lang", ["id", "en"])
+    def test_ai_script_stream(self, client, lang):
+        p = full_payload("business_deal", lang)
+        analysis = client.post(f"{BASE_URL}/api/analyze", json=p).json()
+        start = time.time()
+        text = ""
+        done = False
+        err = None
+        with client.post(f"{BASE_URL}/api/ai/generate",
+                         json={"input": p, "analysis": analysis, "mode": "script"},
+                         stream=True, timeout=90) as resp:
+            assert resp.status_code == 200
+            for line in resp.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data: "):
+                    continue
+                ev = json.loads(line[6:])
+                if "delta" in ev:
+                    text += ev["delta"]
+                if ev.get("error"):
+                    err = ev["error"]
+                if ev.get("done"):
+                    done = True
+                    break
+        elapsed = time.time() - start
+        assert err is None, f"AI error: {err}"
+        assert done, "stream did not emit done:true"
+        assert elapsed < 55, f"took {elapsed:.1f}s"
+        assert len(text) > 500, f"output too short: {len(text)}"
         low = text.lower()
-        if mode == "script":
-            # P.A.C.T labels must be correct (Performance/Achievement/Comparison/Timing, not 'Problem')
-            for lbl in ["performance", "achievement", "comparison", "timing"]:
-                assert lbl in low, f"missing P.A.C.T label '{lbl}' in script output"
-        assert len(text) > 300, f"output too short: {text[:200]}"
-        if mode == "script":
-            anchor = analysis["numbers"]["anchor"]
-            fmt = f"{int(anchor):,}".replace(",", ".")
-            assert fmt in text or str(int(anchor)) in text, \
-                f"anchor {fmt} not present in AI output"
+        assert "performance" in low and "achievement" in low
+        assert "comparison" in low and "timing" in low
+        if lang == "en":
+            hits = [w for w in (" yang ", " dengan ", " saya ", " adalah ", " tidak ") if w in low]
+            assert not hits, f"Indonesian words in EN AI output: {hits}"
+        else:
+            hits = [w for w in (" the ", " your ", " we need ") if w in low]
+            assert not hits, f"English words in ID AI output: {hits}"

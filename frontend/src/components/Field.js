@@ -117,7 +117,7 @@ export const SectionHead = ({ code, title, desc }) => (
   </div>
 );
 
-export const RowCard = ({ children, onRemove, index, testId }) => (
+export const RowCard = ({ children, onRemove, index, testId, removeLabel = "REMOVE" }) => (
   <div className="border border-brand-line bg-[#101010] p-5 relative" data-testid={testId}>
     <div className="flex items-center justify-between mb-4">
       <span className="font-mono text-[0.65rem] tracking-[0.2em] text-neutral-500">#{String(index + 1).padStart(2, "0")}</span>
@@ -128,7 +128,7 @@ export const RowCard = ({ children, onRemove, index, testId }) => (
           data-testid={`${testId}-remove`}
           className="font-mono text-[0.65rem] tracking-widest text-neutral-500 hover:text-brand-red transition-colors"
         >
-          HAPUS
+          {removeLabel}
         </button>
       )}
     </div>

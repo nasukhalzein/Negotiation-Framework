@@ -1,97 +1,32 @@
-"""Rule-based negotiation engine: PACT scoring, BATNA analysis, number engine."""
+"""Rule-based negotiation engine: PACT scoring, BATNA analysis, number engine (bilingual)."""
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
-CONTEXTS = {
+from texts import t
+
+CTX_CFG = {
+    "salary_raise": {"stretch": 1.30, "cap": 1.40, "annual": True},
+    "job_offer": {"stretch": 1.35, "cap": 1.62, "annual": True},
+    "business_deal": {"stretch": 1.25, "cap": 1.50, "annual": False},
+}
+
+TIMING_W = {
     "salary_raise": {
-        "label": "Kenaikan Gaji / Promosi",
-        "counterpart": "atasan & HR",
-        "unit": "gaji bulanan",
-        "employer_stretch": 1.30,
-        "non_monetary": [
-            "Review ulang dalam 3 bulan dengan target tertulis",
-            "Perubahan job title / level tanpa tunggu siklus",
-            "Bonus performa satu kali (sign-on retensi)",
-            "Budget training / sertifikasi",
-            "Hari kerja fleksibel / remote 2 hari",
-        ],
+        "review_cycle_near": 6, "recent_win": 6, "company_growing": 5, "scope_increased": 5,
+        "hard_to_replace": 5, "competing_offer": 6, "hiring_freeze": -8, "recent_miss": -7,
     },
     "job_offer": {
-        "label": "Offer Kerja Baru",
-        "counterpart": "recruiter / hiring manager",
-        "unit": "gaji bulanan",
-        "employer_stretch": 1.35,
-        "non_monetary": [
-            "Sign-on bonus untuk menutup gap",
-            "Review gaji dipercepat di bulan ke-6",
-            "Tambahan cuti / WFA",
-            "Level & scope tim yang lebih tinggi",
-            "Penggantian bonus yang hilang dari kantor lama",
-        ],
+        "role_urgent": 6, "competing_offer": 7, "quarter_hiring_target": 4, "referral_champion": 5,
+        "niche_skill": 5, "budget_locked": -7, "already_resigned": -8, "long_unemployed": -6,
     },
     "business_deal": {
-        "label": "Deal Bisnis / Klien",
-        "counterpart": "klien / partner",
-        "unit": "nilai kontrak",
-        "employer_stretch": 1.25,
-        "non_monetary": [
-            "Termin pembayaran 50% di depan",
-            "Scope dikurangi dengan harga tetap",
-            "Kontrak jangka panjang dengan harga bertingkat",
-            "Klausul revisi terbatas (2x revisi)",
-            "Studi kasus / testimoni sebagai kompensasi",
-        ],
-    },
-    "freelance_rate": {
-        "label": "Rate Freelance / Project",
-        "counterpart": "klien",
-        "unit": "rate project",
-        "employer_stretch": 1.30,
-        "non_monetary": [
-            "Deposit 50% sebelum mulai",
-            "Batas revisi jelas + biaya revisi tambahan",
-            "Retainer bulanan alih-alih per project",
-            "Kredit portofolio & referral",
-            "Timeline lebih longgar untuk harga yang sama",
-        ],
-    },
-    "vendor": {
-        "label": "Negosiasi Vendor / Supplier",
-        "counterpart": "vendor",
-        "unit": "nilai kontrak",
-        "employer_stretch": 1.20,
-        "non_monetary": [
-            "Termin pembayaran diperpanjang (net 60)",
-            "SLA & penalti keterlambatan",
-            "Harga terkunci 12 bulan",
-            "Free onboarding / training",
-            "Volume discount bertingkat",
-        ],
-    },
-    "other": {
-        "label": "Negosiasi Lainnya",
-        "counterpart": "pihak lawan",
-        "unit": "nilai kesepakatan",
-        "employer_stretch": 1.25,
-        "non_monetary": [
-            "Perpanjangan tenggat / timeline",
-            "Pembayaran bertahap",
-            "Jaminan tertulis untuk review berikutnya",
-            "Pengurangan scope dengan nilai tetap",
-        ],
+        "client_deadline": 6, "inbound_lead": 6, "budget_cycle_open": 5, "pipeline_full": 6,
+        "unique_capability": 5, "tender_price_war": -7, "cashflow_pressure": -8, "client_shopping": -5,
     },
 }
 
-TIMING_FACTORS = {
-    "review_cycle_near": ("Siklus review / budget planning kurang dari 8 minggu", 6),
-    "recent_win": ("Baru selesai deliver hasil besar (< 60 hari)", 6),
-    "company_growing": ("Perusahaan / klien sedang tumbuh atau untung", 5),
-    "scope_increased": ("Scope kerja naik tanpa kompensasi naik", 5),
-    "hard_to_replace": ("Sulit / mahal menggantikan posisi saya", 5),
-    "competing_offer": ("Ada offer atau peluang lain yang aktif", 6),
-    "hiring_freeze": ("Sedang ada hiring freeze / efisiensi biaya", -8),
-    "recent_miss": ("Baru saja ada kegagalan target yang terlihat", -7),
-}
+NEGATIVE_TIMING = {"hiring_freeze", "recent_miss", "budget_locked", "already_resigned",
+                   "long_unemployed", "tender_price_war", "cashflow_pressure", "client_shopping"}
 
 
 class Metric(BaseModel):
@@ -100,7 +35,7 @@ class Metric(BaseModel):
     result: Optional[float] = None
     unit: str = ""
     period: str = ""
-    impact_value: Optional[float] = None  # nilai rupiah dampak per tahun
+    impact_value: Optional[float] = None
 
 
 class Achievement(BaseModel):
@@ -112,14 +47,15 @@ class Achievement(BaseModel):
 
 class Alternative(BaseModel):
     label: str = ""
-    kind: str = "other"  # offer | client | side_income | internal_move | skill | other
-    value: Optional[float] = None  # nilai per periode yang sama dengan current
-    probability: int = 50  # 0-100
+    kind: str = "other"
+    value: Optional[float] = None
+    probability: int = 50
     weeks_to_activate: int = 8
-    is_active: bool = False  # sudah nyata / tertulis
+    is_active: bool = False
 
 
 class NegotiationInput(BaseModel):
+    lang: str = "id"
     context: str = "salary_raise"
     role: str = ""
     tenure_months: int = 12
@@ -136,7 +72,7 @@ class NegotiationInput(BaseModel):
     timing_factors: List[str] = Field(default_factory=list)
     alternatives: List[Alternative] = Field(default_factory=list)
     monthly_expense: Optional[float] = None
-    relationship_importance: int = 3  # 1-5, seberapa penting jaga hubungan
+    relationship_importance: int = 3
 
 
 def _clamp(v, lo, hi):
@@ -173,9 +109,12 @@ def _delta_pct(m: Metric) -> Optional[float]:
     return (m.result - m.baseline) / abs(m.baseline) * 100
 
 
+def _cfg(context: str):
+    return CTX_CFG.get(context, CTX_CFG["salary_raise"])
+
+
 def score_pact(inp: NegotiationInput, impact_ratio: float) -> Dict[str, Any]:
-    # --- P: Performance (0-25)
-    quantified = [m for m in inp.metrics if _delta_pct(m) is not None]
+    quantified = [m for m in inp.metrics if _delta_pct(m) is not None and m.label.strip()]
     p = min(len(quantified), 3) * 5.0
     if impact_ratio >= 5:
         p += 10
@@ -185,20 +124,17 @@ def score_pact(inp: NegotiationInput, impact_ratio: float) -> Dict[str, Any]:
         p += 6
     elif impact_ratio > 0:
         p += 3
-    p_score = _clamp(p, 0, 25)
 
-    # --- A: Achievement (0-25)
-    with_value = [a for a in inp.achievements if a.impact_value]
+    named_ach = [x for x in inp.achievements if x.title.strip()]
+    with_value = [x for x in named_ach if x.impact_value]
     a = min(len(with_value), 3) * 5.0
-    if any(x.beyond_scope for x in inp.achievements):
+    if any(x.beyond_scope for x in named_ach):
         a += 5
-    if any(x.verifiable for x in inp.achievements):
+    if any(x.verifiable for x in named_ach):
         a += 5
-    if not inp.achievements:
+    if not named_ach:
         a = 0
-    a_score = _clamp(a, 0, 25)
 
-    # --- C: Comparison (0-25)
     c = 0.0
     if inp.market_p50:
         c += 9
@@ -208,48 +144,36 @@ def score_pact(inp: NegotiationInput, impact_ratio: float) -> Dict[str, Any]:
         c += 5
     base = inp.current_value or inp.offer_value or 0
     if inp.market_p50 and base and base < inp.market_p50:
-        c += 6  # posisi di bawah pasar = argumen objektif kuat
+        c += 6
     elif inp.market_p50 and base and base < inp.market_p50 * 1.1:
         c += 3
     if inp.scope_growth_note.strip():
         c += 3
-    c_score = _clamp(c, 0, 25)
 
-    # --- T: Timing (0-25)
-    t = 8.0  # netral
-    for key in inp.timing_factors:
-        if key in TIMING_FACTORS:
-            t += TIMING_FACTORS[key][1]
-    t_score = _clamp(t, 0, 25)
+    weights = TIMING_W.get(inp.context, TIMING_W["salary_raise"])
+    tscore = 8.0 + sum(weights.get(k, 0) for k in inp.timing_factors)
 
     return {
-        "P": round(p_score),
-        "A": round(a_score),
-        "C": round(c_score),
-        "T": round(t_score),
-        "total": round(p_score + a_score + c_score + t_score),
+        "P": round(_clamp(p, 0, 25)),
+        "A": round(_clamp(a, 0, 25)),
+        "C": round(_clamp(c, 0, 25)),
+        "T": round(_clamp(tscore, 0, 25)),
+        "total": round(_clamp(p, 0, 25) + _clamp(a, 0, 25) + _clamp(c, 0, 25) + _clamp(tscore, 0, 25)),
         "quantified_metrics": len(quantified),
     }
 
 
 def score_batna(inp: NegotiationInput) -> Dict[str, Any]:
+    tx = t(inp.lang)
     alts = [a for a in inp.alternatives if a.label.strip()]
     if not alts:
-        return {
-            "score": 8,
-            "tier": "Tidak Ada BATNA",
-            "best": None,
-            "expected_value": 0.0,
-            "runway_months": None,
-            "alternatives": [],
-        }
+        return {"score": 8, "tier": tx["batna_tiers"]["none"], "best": None,
+                "expected_value": 0.0, "alternatives": []}
 
     scored = []
     for a in alts:
         prob = _clamp(a.probability, 0, 100) / 100
         speed = _clamp(1 - (a.weeks_to_activate / 26), 0.1, 1.0)
-        ev = (a.value or 0) * prob
-        strength = prob * 60 + speed * 25 + (15 if a.is_active else 0)
         scored.append({
             "label": a.label,
             "kind": a.kind,
@@ -257,95 +181,73 @@ def score_batna(inp: NegotiationInput) -> Dict[str, Any]:
             "probability": a.probability,
             "weeks_to_activate": a.weeks_to_activate,
             "is_active": a.is_active,
-            "expected_value": round(ev),
-            "strength": round(_clamp(strength, 0, 100)),
+            "expected_value": round((a.value or 0) * prob),
+            "strength": round(_clamp(prob * 60 + speed * 25 + (15 if a.is_active else 0), 0, 100)),
         })
 
     scored.sort(key=lambda x: (x["strength"], x["expected_value"]), reverse=True)
     best = scored[0]
-    diversity = min(len(scored), 3) * 4
-    score = _clamp(best["strength"] * 0.8 + diversity, 0, 100)
-
-    runway = None
-    tier = (
-        "BATNA Dominan" if score >= 75 else
-        "BATNA Kuat" if score >= 55 else
-        "BATNA Sedang" if score >= 35 else
-        "BATNA Lemah"
-    )
+    score = _clamp(best["strength"] * 0.8 + min(len(scored), 3) * 4, 0, 100)
+    key = ("dominant" if score >= 75 else "strong" if score >= 55 else "moderate" if score >= 35 else "weak")
     return {
         "score": round(score),
-        "tier": tier,
+        "tier": tx["batna_tiers"][key],
+        "tier_key": key,
         "best": best,
         "expected_value": best["expected_value"],
-        "runway_months": runway,
         "alternatives": scored,
     }
 
 
 def build_numbers(inp: NegotiationInput, leverage: int, batna: Dict[str, Any], impact_ratio: float) -> Dict[str, Any]:
-    cfg = CONTEXTS.get(inp.context, CONTEXTS["other"])
+    tx = t(inp.lang)
+    cfg = _cfg(inp.context)
+    ctx_tx = tx["ctx"].get(inp.context, tx["ctx"]["salary_raise"])
     base = inp.current_value or inp.offer_value or 0
     if not base:
-        return {"available": False, "reason": "Angka dasar (gaji/nilai saat ini atau offer) belum diisi."}
+        return {"available": False, "reason": tx["no_base"]}
 
     p50 = inp.market_p50
     p75 = inp.market_p75 or (p50 * 1.18 if p50 else None)
 
     market_target = p75 or (p50 * 1.15 if p50 else base * 1.22)
-    impact_uplift = 0.08 + min(0.30, impact_ratio * 0.03)
-    impact_target = base * (1 + impact_uplift)
-    raw_target = max(market_target, impact_target)
+    impact_target = base * (1 + 0.08 + min(0.30, impact_ratio * 0.03))
+    raw_target = max(market_target, impact_target) * (0.92 + (leverage / 100) * 0.16)
 
-    # leverage menyesuaikan agresivitas target
-    raw_target *= 0.92 + (leverage / 100) * 0.16
-
-    # reality cap: satu kali negosiasi punya batas lompatan realistis per konteks
-    cap_map = {"salary_raise": 1.40, "job_offer": 1.62, "business_deal": 1.50,
-               "freelance_rate": 1.60, "vendor": 1.40, "other": 1.50}
-    cap_mult = cap_map.get(inp.context, 1.5) * (0.92 + (leverage / 100) * 0.16)
-    cap_value = base * cap_mult
+    cap_value = base * cfg["cap"] * (0.92 + (leverage / 100) * 0.16)
     target = min(raw_target, cap_value)
     capped = raw_target > cap_value * 1.02
 
     if inp.target_value:
-        # target user dihormati tapi tetap dibatasi plafon realistis
         target = min(max(target, inp.target_value * 0.98), cap_value * 1.1)
 
     anchor_mult = 1.06 + (leverage / 100) * 0.09
     anchor = target * anchor_mult
 
     reservation = max(base, batna["expected_value"] or 0)
-    if inp.monthly_expense and inp.context in ("salary_raise", "job_offer"):
+    if inp.monthly_expense and cfg["annual"]:
         reservation = max(reservation, inp.monthly_expense * 1.15)
 
-    # BATNA lebih tinggi dari plafon realistis: ladder harus tetap menurun,
-    # dan verdict-nya berubah jadi "eksekusi alternatif".
     batna_superior = reservation > target
     if batna_superior:
         target = reservation * 1.05
         anchor = target * anchor_mult
         capped = False
 
-    counterpart_max = max((p75 or base * cfg["employer_stretch"]), base * cfg["employer_stretch"])
-    zopa_low, zopa_high = _round_money(reservation), _round_money(counterpart_max)
-    zopa_exists = zopa_high > zopa_low
-
-    anchor_r = _round_money(anchor)
-    target_r = _round_money(target)
-    reservation_r = _round_money(reservation)
+    counterpart_max = max((p75 or base * cfg["stretch"]), base * cfg["stretch"])
+    anchor_r, target_r, reservation_r = _round_money(anchor), _round_money(target), _round_money(reservation)
     mid = _round_money((target_r + reservation_r) / 2)
+    zopa_low, zopa_high = reservation_r, _round_money(counterpart_max)
 
     ladder = [
-        {"step": 1, "label": "Anchor (angka pembuka)", "value": anchor_r,
-         "note": "Buka di sini. Jangan menyebut angka ini sebagai 'minimal'."},
-        {"step": 2, "label": "Target realistis", "value": target_r,
-         "note": "Titik di mana lo tanda tangan tanpa ragu."},
-        {"step": 3, "label": "Zona kompromi", "value": mid,
-         "note": "Turun ke sini HANYA jika ditukar sesuatu (timeline review, bonus, scope)."},
-        {"step": 4, "label": "Walk-away / reservation", "value": reservation_r,
-         "note": "Di bawah ini, BATNA lo lebih menguntungkan. Berhenti negosiasi angka."},
+        {"step": i + 1, "label": tx["ladder"][i]["label"], "note": tx["ladder"][i]["note"], "value": v}
+        for i, v in enumerate([anchor_r, target_r, mid, reservation_r])
     ]
+
+    pos = None
+    if p50:
+        pos = tx["market_pos"]["below"] if base < p50 * 0.95 else \
+            tx["market_pos"]["at"] if base <= p50 * 1.1 else tx["market_pos"]["above"]
 
     return {
         "available": True,
@@ -356,249 +258,158 @@ def build_numbers(inp: NegotiationInput, leverage: int, batna: Dict[str, Any], i
         "reservation": reservation_r,
         "capped": capped,
         "batna_superior": batna_superior,
-        "batna_note": (
-            f"Alternatif terbaik lo ({fmt_money(reservation_r, inp.currency)}) sudah lebih tinggi dari yang "
-            f"realistis didapat di sini. Posisi lo: minta {fmt_money(anchor_r, inp.currency)} tanpa beban — "
-            f"kalau ditolak, eksekusi alternatif itu memang pilihan yang lebih menguntungkan."
-            if batna_superior else None
-        ),
-        "staged_plan": (
-            f"Gap ke harga pasar terlalu besar untuk ditutup sekali. Strategi 2 tahap: kunci "
-            f"{fmt_money(target_r, inp.currency)} sekarang + kesepakatan tertulis review ke "
-            f"{fmt_money(_round_money(min(raw_target, base * 1.75)), inp.currency)} dalam 6–9 bulan dengan kriteria yang jelas."
-            if capped else None
-        ),
-        "increase_pct": round((target_r - base) / base * 100, 1) if base else 0,
-        "anchor_increase_pct": round((anchor_r - base) / base * 100, 1) if base else 0,
+        "batna_note": tx["batna_note"].format(res=fmt_money(reservation_r, inp.currency),
+                                              anchor=fmt_money(anchor_r, inp.currency)) if batna_superior else None,
+        "staged_plan": tx["staged_plan"].format(
+            now=fmt_money(target_r, inp.currency),
+            later=fmt_money(_round_money(min(raw_target, base * 1.75)), inp.currency)) if capped else None,
+        "increase_pct": round((target_r - base) / base * 100, 1),
+        "anchor_increase_pct": round((anchor_r - base) / base * 100, 1),
         "market_p50": _round_money(p50) if p50 else None,
         "market_p75": _round_money(p75) if p75 else None,
-        "market_position": (
-            None if not p50 else
-            "di bawah pasar" if base < p50 * 0.95 else
-            "sesuai pasar" if base <= p50 * 1.1 else
-            "di atas median pasar"
-        ),
-        "zopa": {"low": zopa_low, "high": zopa_high, "exists": zopa_exists},
+        "market_position": pos,
+        "zopa": {"low": zopa_low, "high": zopa_high, "exists": zopa_high > zopa_low},
         "ladder": ladder,
-        "non_monetary": cfg["non_monetary"],
+        "non_monetary": ctx_tx["nonmon"],
     }
 
 
 def build_gaps(inp: NegotiationInput, pact: Dict[str, Any], batna: Dict[str, Any]) -> List[Dict[str, str]]:
-    gaps = []
+    g = t(inp.lang)["gaps"]
+    out = []
     if pact["P"] < 15:
-        gaps.append({
-            "pillar": "Performance",
-            "problem": "Hasil kerja lo belum berbentuk angka sebelum-sesudah.",
-            "action": "Ambil 2 metrik yang lo pengaruhi langsung. Tulis: baseline → hasil → periode. Tanpa ini, argumen lo jadi opini.",
-            "impact": "+10 poin leverage",
-        })
+        out.append(g["P"])
     if pact["A"] < 15:
-        gaps.append({
-            "pillar": "Achievement",
-            "problem": "Pencapaian belum diterjemahkan ke nilai uang / risiko yang dihindari.",
-            "action": "Untuk tiap pencapaian, jawab: 'ini menghasilkan / menghemat berapa?' Perkiraan dengan asumsi jelas tetap jauh lebih kuat daripada kosong.",
-            "impact": "+8 poin leverage",
-        })
+        out.append(g["A"])
     if pact["C"] < 14:
-        gaps.append({
-            "pillar": "Comparison",
-            "problem": "Belum ada pembanding pasar yang objektif.",
-            "action": "Kumpulkan 3 data: LinkedIn Salary / Glassdoor, 2 job posting dengan scope sama, dan tanya 1–2 orang di industri. Pakai rentang, bukan satu angka.",
-            "impact": "+9 poin leverage",
-        })
+        out.append(g["C"])
     if pact["T"] < 12:
-        gaps.append({
-            "pillar": "Timing",
-            "problem": "Momen sekarang bukan momen terkuat lo.",
-            "action": "Tunda 4–8 minggu: kunci satu hasil besar dulu, atau masuk 6–8 minggu sebelum siklus review/budget planning.",
-            "impact": "+6 poin leverage",
-        })
+        out.append(g["T"])
     if batna["score"] < 35:
-        gaps.append({
-            "pillar": "BATNA",
-            "problem": "Lo belum punya alternatif nyata, jadi posisi lo bergantung pada goodwill pihak lawan.",
-            "action": "Target 2 minggu: 5 aplikasi/pitch keluar, 2 percakapan eksploratif. BATNA tidak harus dipakai — cukup ada supaya lo tenang.",
-            "impact": "+15 poin leverage",
-        })
-    return gaps
+        out.append(g["B"])
+    return out
 
 
 def build_risks(inp: NegotiationInput, numbers: Dict[str, Any], leverage: int, batna: Dict[str, Any]) -> List[Dict[str, str]]:
-    risks = []
+    tx = t(inp.lang)
+    r, lv = tx["risks"], tx["levels"]
+    out = []
     if numbers.get("available") and not numbers["zopa"]["exists"]:
-        risks.append({
-            "level": "tinggi",
-            "title": "Tidak ada zona kesepakatan (ZOPA)",
-            "detail": "Titik walk-away lo lebih tinggi dari kemampuan realistis pihak lawan. Pilihannya: pindah ke komponen non-uang, atau eksekusi BATNA.",
-        })
+        out.append({"level": lv["high"], **r["no_zopa"]})
     if numbers.get("available") and numbers["anchor_increase_pct"] > 45 and leverage < 60:
-        risks.append({
-            "level": "sedang",
-            "title": f"Anchor {numbers['anchor_increase_pct']}% dengan bukti yang belum kuat",
-            "detail": "Angka besar tanpa dokumentasi dampak akan dibaca sebagai tidak realistis. Perkuat pilar P & A dulu, atau turunkan anchor.",
-        })
+        out.append({"level": lv["medium"],
+                    "title": r["aggressive"]["title"].format(pct=numbers["anchor_increase_pct"]),
+                    "detail": r["aggressive"]["detail"]})
     if leverage < 40:
-        risks.append({
-            "level": "tinggi",
-            "title": "Leverage masih rendah untuk membuka negosiasi",
-            "detail": "Peluang ditolak besar dan penolakan mengunci lo minimal 6 bulan. Kerjakan action plan dulu, baru minta meeting.",
-        })
-    if "hiring_freeze" in inp.timing_factors:
-        risks.append({
-            "level": "sedang",
-            "title": "Kondisi efisiensi biaya",
-            "detail": "Fokus ke non-uang yang bisa dikunci sekarang (title, scope, komitmen review tertulis di kuartal depan).",
-        })
+        out.append({"level": lv["high"], **r["low_leverage"]})
+    if any(k in inp.timing_factors for k in ("hiring_freeze", "budget_locked", "cashflow_pressure")):
+        out.append({"level": lv["medium"], **r["freeze"]})
     if batna["score"] >= 60 and inp.relationship_importance >= 4:
-        risks.append({
-            "level": "rendah",
-            "title": "BATNA kuat tapi hubungan penting",
-            "detail": "Jangan pakai alternatif sebagai ancaman. Framing: 'Saya ingin tetap di sini, bantu saya membuat itu jadi keputusan yang mudah.'",
-        })
-    if not risks:
-        risks.append({
-            "level": "rendah",
-            "title": "Posisi relatif aman",
-            "detail": "Tidak ada red flag besar. Fokus ke eksekusi: latih pembukaan 3x dan siapkan jawaban 3 penolakan umum.",
-        })
-    return risks
+        out.append({"level": lv["low"], **r["relationship"]})
+    if not out:
+        out.append({"level": lv["low"], **r["clear"]})
+    return out
 
 
-def build_script(inp: NegotiationInput, pact: Dict[str, Any], numbers: Dict[str, Any], batna: Dict[str, Any]) -> Dict[str, Any]:
-    cfg = CONTEXTS.get(inp.context, CONTEXTS["other"])
-    role = inp.role or "peran saya"
+def build_script(inp: NegotiationInput, numbers: Dict[str, Any], batna: Dict[str, Any]) -> Dict[str, Any]:
+    tx = t(inp.lang)
+    s = tx["script"]
     cur = inp.currency
-    top_metric = next((m for m in inp.metrics if _delta_pct(m) is not None), None)
+    ctx = inp.context if inp.context in CTX_CFG else "salary_raise"
+    role = inp.role or ("peran ini" if inp.lang == "id" else "this role")
+
+    top_metric = next((m for m in inp.metrics if _delta_pct(m) is not None and m.label.strip()), None)
     top_ach = next((a for a in inp.achievements if a.impact_value and a.title.strip()), None) or \
         next((a for a in inp.achievements if a.title.strip()), None)
 
-    perf_line = (
-        f"{top_metric.label} bergerak dari {top_metric.baseline:g} ke {top_metric.result:g} {top_metric.unit} {top_metric.period}".strip()
-        if top_metric else "hasil kerja yang saya pegang membaik dibanding periode sebelumnya"
-    )
-    ach_line = top_ach.title if top_ach else "beberapa inisiatif di luar job description saya"
-    anchor_txt = numbers.get("anchor")
+    perf = (f"{top_metric.label} {'bergerak dari' if inp.lang == 'id' else 'moved from'} "
+            f"{top_metric.baseline:g} {'ke' if inp.lang == 'id' else 'to'} {top_metric.result:g} "
+            f"{top_metric.unit} {top_metric.period}".strip()) if top_metric else s["perf_fallback"]
+    ach = top_ach.title if top_ach else s["ach_fallback"]
 
-    opening = (
-        f"Terima kasih waktunya. Saya mau bicara soal kompensasi untuk {role}, "
-        f"dan saya sudah siapkan datanya supaya ini jadi diskusi yang objektif, bukan soal perasaan."
-    )
     body = [
-        f"Performance — {perf_line}.",
-        f"Achievement — {ach_line}.",
-        (f"Comparison — untuk scope seperti ini, rentang pasar berada di sekitar "
-         f"{fmt_money(numbers.get('market_p50') or numbers.get('target'), cur)}–"
-         f"{fmt_money(numbers.get('market_p75') or numbers.get('anchor'), cur)}, "
-         f"sementara posisi saya sekarang di {fmt_money(numbers.get('base'), cur)}."),
-        "Timing — " + (
-            "kita ada di depan siklus review, jadi ini waktu paling tepat membicarakannya."
-            if "review_cycle_near" in inp.timing_factors else
-            "saya baru menyelesaikan siklus kerja penuh dengan hasil yang bisa dilihat."
-        ),
+        s["body_perf"].format(perf=perf),
+        s["body_ach"].format(ach=ach),
+        s["body_comp"].format(
+            p50=fmt_money(numbers.get("market_p50") or numbers.get("target"), cur),
+            p75=fmt_money(numbers.get("market_p75") or numbers.get("anchor"), cur),
+            base=fmt_money(numbers.get("base"), cur)),
+        s["body_time_review"] if "review_cycle_near" in inp.timing_factors else s["body_time_default"],
     ]
-    ask = (
-        f"Berdasarkan itu, angka yang saya ajukan adalah {fmt_money(anchor_txt, cur)}. "
-        f"Saya terbuka mendiskusikan struktur — yang penting kita sepakat soal nilai kontribusinya."
-        if anchor_txt else
-        "Berdasarkan itu, saya ingin kita sepakati angka yang mencerminkan kontribusi ini."
-    )
-    silence = "Setelah menyebut angka: berhenti bicara. Diam 5 detik. Biarkan mereka merespons pertama."
 
-    objections = [
-        {
-            "objection": "\"Budget-nya nggak ada sekarang.\"",
-            "response": ("\"Saya mengerti. Kalau angka ini bukan sekarang, boleh kita sepakati kapan bisa? "
-                         "Misal: kita kunci review di bulan ke-3 dengan target yang tertulis, atau bagian dari gap "
-                         "ditutup lewat bonus performa.\" — pindahkan negosiasi dari 'iya/tidak' ke 'kapan dan bagaimana'."),
-        },
-        {
-            "objection": "\"Angkamu di atas struktur kami.\"",
-            "response": ("\"Boleh saya tahu range untuk level ini? Kalau saya di batas atas, saya ingin tahu "
-                         "apa yang membuat seseorang naik level — supaya kita bicara jalurnya, bukan cuma angkanya.\""),
-        },
-        {
-            "objection": "\"Orang lain di posisi yang sama juga digaji segitu.\"",
-            "response": ("\"Saya tidak membandingkan dengan rekan kerja. Saya membandingkan hasil saya dengan "
-                         "target dan dengan harga pasar untuk scope yang sama.\""),
-        },
-        {
-            "objection": "\"Kamu masih terlalu baru.\"",
-            "response": (f"\"Saya {inp.tenure_months} bulan di sini, dan dalam periode itu {perf_line.lower()}. "
-                         "Saya mengerti kalau lama kerja jadi pertimbangan — usulan saya: kita sepakati angka sekarang "
-                         "dengan efektif di bulan depan, atau review terjadwal dengan kriteria yang jelas.\""),
-        },
-    ]
+    weeks = (batna["best"] or {}).get("weeks_to_activate", 4) if batna["best"] else 4
+    objections = []
+    for o in s["objections"][ctx]:
+        objections.append({
+            "objection": o["objection"],
+            "response": o["response"].format(
+                tenure=inp.tenure_months, perf=perf, weeks=max(2, weeks),
+                p50=fmt_money(numbers.get("market_p50") or numbers.get("target"), cur),
+                p75=fmt_money(numbers.get("market_p75") or numbers.get("anchor"), cur)),
+        })
     if batna["score"] >= 55:
         objections.append({
-            "objection": "Mereka menekan / menunda tanpa jawaban",
-            "response": ("Sebut alternatif tanpa mengancam: \"Saya sedang mempertimbangkan beberapa opsi, "
-                         "tapi preferensi pertama saya tetap di sini. Saya butuh kejelasan sebelum "
-                         f"{max(2, (batna['best'] or {}).get('weeks_to_activate', 4))} minggu ke depan.\""),
+            "objection": s["batna_obj"]["objection"],
+            "response": s["batna_obj"]["response"].format(weeks=max(2, weeks)),
         })
 
-    closing = (
-        "Tutup dengan komitmen konkret: \"Boleh kita sepakati langkah berikutnya hari ini — "
-        "siapa yang perlu approve, dan kapan saya bisa dapat jawabannya?\" Lalu kirim ringkasan lewat email dalam 24 jam."
-    )
-    return {"opening": opening, "body": body, "ask": ask, "silence_rule": silence,
-            "objections": objections, "closing": closing, "counterpart": cfg["counterpart"]}
+    anchor = numbers.get("anchor")
+    return {
+        "opening": s["opening"][ctx].format(role=role),
+        "body": body,
+        "ask": s["ask"].format(anchor=fmt_money(anchor, cur)) if anchor else s["ask_nonum"],
+        "silence_rule": s["silence"],
+        "objections": objections,
+        "closing": s["closing"],
+        "counterpart": tx["ctx"][ctx]["counterpart"],
+    }
 
 
 def build_checklist(inp: NegotiationInput, pact: Dict[str, Any], batna: Dict[str, Any], numbers: Dict[str, Any]) -> List[Dict[str, Any]]:
-    items = [
-        {"phase": "Data", "task": "Tulis 2–3 metrik dengan format baseline → hasil → periode", "done": pact["quantified_metrics"] >= 2},
-        {"phase": "Data", "task": "Kuantifikasi minimal 1 pencapaian dalam nilai uang", "done": any(a.impact_value for a in inp.achievements)},
-        {"phase": "Data", "task": "Kumpulkan 3 sumber data pasar (rentang, bukan 1 angka)", "done": bool(inp.market_p50 and inp.market_p75)},
-        {"phase": "Posisi", "task": "Tentukan anchor, target, dan walk-away secara tertulis", "done": numbers.get("available", False)},
-        {"phase": "Posisi", "task": "Punya minimal 1 BATNA yang nyata / aktif", "done": batna["score"] >= 45},
-        {"phase": "Eksekusi", "task": "Latih pembukaan 3x sampai bisa tanpa membaca", "done": False},
-        {"phase": "Eksekusi", "task": "Siapkan jawaban untuk 3 penolakan paling mungkin", "done": False},
-        {"phase": "Eksekusi", "task": "Jadwalkan meeting terpisah (jangan nyempil di 1-on-1 biasa)", "done": False},
-        {"phase": "Setelah", "task": "Kirim ringkasan kesepakatan lewat email dalam 24 jam", "done": False},
+    items = t(inp.lang)["checklist"]
+    done = [
+        pact["quantified_metrics"] >= 2,
+        any(a.impact_value and a.title.strip() for a in inp.achievements),
+        bool(inp.market_p50 and inp.market_p75),
+        numbers.get("available", False),
+        batna["score"] >= 45,
+        False, False, False, False,
     ]
-    return items
+    return [{"phase": it["phase"], "task": it["task"], "done": done[i]} for i, it in enumerate(items)]
 
 
 def analyze(inp: NegotiationInput) -> Dict[str, Any]:
+    tx = t(inp.lang)
+    ctx = inp.context if inp.context in CTX_CFG else "salary_raise"
     base = inp.current_value or inp.offer_value or 0
-    total_impact = sum(
-        [m.impact_value or 0 for m in inp.metrics] + [a.impact_value or 0 for a in inp.achievements]
-    )
-    annual_base = base * 12 if inp.context in ("salary_raise", "job_offer") else base
+    total_impact = sum([m.impact_value or 0 for m in inp.metrics] + [a.impact_value or 0 for a in inp.achievements])
+    annual_base = base * 12 if _cfg(ctx)["annual"] else base
     impact_ratio = (total_impact / annual_base) if annual_base else 0
 
     pact = score_pact(inp, impact_ratio)
     batna = score_batna(inp)
     leverage = round(_clamp(pact["total"] * 0.7 + batna["score"] * 0.3, 0, 100))
-
-    tier = (
-        {"label": "Posisi Dominan", "verdict": "Buka negosiasi sekarang. Lo punya bukti dan alternatif.", "color": "strong"} if leverage >= 75 else
-        {"label": "Posisi Kuat", "verdict": "Siap negosiasi. Tutup 1–2 gap di bawah untuk memaksimalkan hasil.", "color": "good"} if leverage >= 58 else
-        {"label": "Sedang Dibangun", "verdict": "Jangan minta meeting minggu ini. Eksekusi action plan 2–4 minggu dulu.", "color": "medium"} if leverage >= 40 else
-        {"label": "Belum Siap", "verdict": "Negosiasi sekarang berisiko ditolak dan mengunci lo 6 bulan. Bangun bukti dulu.", "color": "weak"}
-    )
+    tier_key = "dominant" if leverage >= 75 else "strong" if leverage >= 58 else "building" if leverage >= 40 else "weak"
+    colors = {"dominant": "strong", "strong": "good", "building": "medium", "weak": "weak"}
 
     numbers = build_numbers(inp, leverage, batna, impact_ratio)
     return {
-        "context": CONTEXTS.get(inp.context, CONTEXTS["other"])["label"],
+        "context": tx["ctx"][ctx]["label"],
+        "context_key": ctx,
+        "lang": inp.lang,
         "leverage_score": leverage,
-        "tier": tier,
+        "tier": {**tx["tiers"][tier_key], "color": colors[tier_key], "key": tier_key},
         "pact": pact,
         "batna": batna,
         "impact": {
             "total_value": round(total_impact),
             "ratio": round(impact_ratio, 2),
-            "statement": (
-                f"Dampak terdokumentasi {round(impact_ratio, 1)}x dari biaya tahunan lo — ini argumen ROI, bukan permintaan."
-                if impact_ratio >= 1 else
-                "Dampak dalam angka belum cukup untuk membangun argumen ROI. Ini gap terbesar lo."
-            ),
+            "statement": tx["impact_yes"].format(ratio=round(impact_ratio, 1)) if impact_ratio >= 1 else tx["impact_no"],
         },
         "numbers": numbers,
         "gaps": build_gaps(inp, pact, batna),
         "risks": build_risks(inp, numbers, leverage, batna),
-        "script": build_script(inp, pact, numbers, batna),
+        "script": build_script(inp, numbers, batna),
         "checklist": build_checklist(inp, pact, batna, numbers),
         "readiness_pct": leverage,
     }

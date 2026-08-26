@@ -3,13 +3,7 @@ import { toast } from "sonner";
 import { Sparkles, Copy, Loader2 } from "lucide-react";
 import { streamAi } from "../lib/api";
 import { copyText } from "../lib/clipboard";
-
-const MODES = [
-  { key: "script", label: "Skrip Lengkap", desc: "Kalimat siap ucap, per bagian" },
-  { key: "objections", label: "Playbook Penolakan", desc: "6 skenario + jawaban" },
-  { key: "email", label: "Email Nego", desc: "Minta meeting & follow-up" },
-  { key: "prompt", label: "Prompt Roleplay", desc: "Latihan lawan AI lain" },
-];
+import { useLang } from "../i18n";
 
 function renderMarkdown(text) {
   const lines = text.split("\n");
@@ -48,6 +42,8 @@ function renderMarkdown(text) {
 }
 
 export const AiPanel = ({ input, analysis, ready }) => {
+  const { t } = useLang();
+  const a = t.ai;
   const [mode, setMode] = useState("script");
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -55,7 +51,7 @@ export const AiPanel = ({ input, analysis, ready }) => {
 
   const run = (m) => {
     if (!ready) {
-      toast.error("Isi dulu framework-nya minimal sampai angka dasar & 1 metrik.");
+      toast.error(a.notReady);
       return;
     }
     setMode(m);
@@ -71,7 +67,7 @@ export const AiPanel = ({ input, analysis, ready }) => {
       },
       (err) => {
         setLoading(false);
-        toast.error(`Gagal generate: ${err}`);
+        toast.error(`${a.failed}: ${err}`);
       }
     );
   };
@@ -79,17 +75,12 @@ export const AiPanel = ({ input, analysis, ready }) => {
   return (
     <section id="ai" className="border-t border-brand-line bg-[#0c0c0c] scroll-mt-20">
       <div className="max-w-[1400px] mx-auto px-5 md:px-10 py-20 md:py-24">
-        <div className="eyebrow">06 · AI Negotiation Coach</div>
-        <h2 className="font-display text-3xl md:text-4xl tracking-tighter mt-5 max-w-3xl">
-          Ubah hasil engine jadi kalimat yang benar-benar lo ucapkan
-        </h2>
-        <p className="text-sm text-neutral-400 mt-5 max-w-2xl leading-relaxed">
-          Semua angka di bawah dihitung dari input lo — AI hanya menyusunnya jadi skrip, playbook penolakan,
-          email, atau prompt roleplay. Tidak ada angka yang dikarang.
-        </p>
+        <div className="eyebrow">{a.eyebrow}</div>
+        <h2 className="font-display text-3xl md:text-4xl tracking-tighter mt-5 max-w-3xl">{a.title}</h2>
+        <p className="text-sm text-neutral-400 mt-5 max-w-2xl leading-relaxed">{a.sub}</p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-10">
-          {MODES.map((m) => (
+          {a.modes.map((m) => (
             <button
               key={m.key}
               data-testid={`ai-mode-${m.key}`}
@@ -116,17 +107,17 @@ export const AiPanel = ({ input, analysis, ready }) => {
           <div className="border border-brand-line bg-[#0f0f0f] mt-10">
             <div className="flex items-center justify-between px-6 py-4 border-b border-brand-line">
               <span className="font-mono text-[0.68rem] tracking-widest uppercase text-neutral-400">
-                {loading ? "MENYUSUN…" : truncated ? "TERPOTONG" : "SELESAI"} · CLAUDE SONNET 4.6
+                {loading ? a.working : truncated ? a.truncated : a.done} · CLAUDE SONNET 4.6
               </span>
               <button
                 data-testid="ai-copy-btn"
                 onClick={async () => {
                   const ok = await copyText(text);
-                  ok ? toast.success("Tersalin ke clipboard") : toast.error("Browser menolak akses clipboard");
+                  ok ? toast.success(a.copied) : toast.error(t.results.copyFail);
                 }}
                 className="inline-flex items-center gap-2 font-mono text-[0.68rem] tracking-widest uppercase text-neutral-400 hover:text-white transition-colors"
               >
-                <Copy size={12} /> Copy
+                <Copy size={12} /> {t.results.copy}
               </button>
             </div>
             <div data-testid="ai-output" className="markdown p-6 md:p-8 max-h-[640px] overflow-y-auto">
@@ -134,10 +125,8 @@ export const AiPanel = ({ input, analysis, ready }) => {
               {loading && <span className="inline-block w-2 h-4 bg-brand-red align-middle animate-pulse" />}
               {truncated && (
                 <div data-testid="ai-truncated-note" className="border border-amber-500/40 bg-[#181510] p-4 mt-6">
-                  <div className="font-mono text-xs text-amber-500">OUTPUT TERPOTONG</div>
-                  <p className="text-sm text-neutral-300 mt-2">
-                    Koneksi stream terputus sebelum selesai. Klik mode yang sama lagi untuk generate ulang.
-                  </p>
+                  <div className="font-mono text-xs text-amber-500">{a.truncTitle}</div>
+                  <p className="text-sm text-neutral-300 mt-2">{a.truncBody}</p>
                 </div>
               )}
             </div>

@@ -7,7 +7,13 @@ export async function analyzeInput(input) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
-  if (!res.ok) throw new Error("Gagal menganalisis");
+  if (!res.ok) throw new Error("Analyze failed");
+  return res.json();
+}
+
+export async function getMeta(lang) {
+  const res = await fetch(`${API}/meta?lang=${lang}`);
+  if (!res.ok) throw new Error("Meta failed");
   return res.json();
 }
 
@@ -17,7 +23,7 @@ export async function saveSession(input, analysis) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ input, analysis }),
   });
-  if (!res.ok) throw new Error("Gagal menyimpan");
+  if (!res.ok) throw new Error("Save failed");
   return res.json();
 }
 
@@ -51,7 +57,7 @@ export async function streamAi({ input, analysis, mode }, onDelta, onDone, onErr
             onDone(true);
           }
         } catch (e) {
-          /* chunk terpotong, abaikan */
+          /* partial chunk */
         }
       }
     }

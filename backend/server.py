@@ -14,7 +14,8 @@ from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
-from engine import NegotiationInput, analyze, CONTEXTS, TIMING_FACTORS
+from engine import NegotiationInput, analyze, CTX_CFG, TIMING_W
+from texts import t as texts_for
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -46,11 +47,16 @@ async def root():
 
 
 @api_router.get("/meta")
-async def meta():
+async def meta(lang: str = "id"):
+    tx = texts_for(lang)
     return {
-        "contexts": [{"key": k, "label": v["label"], "counterpart": v["counterpart"], "unit": v["unit"]}
-                     for k, v in CONTEXTS.items()],
-        "timing_factors": [{"key": k, "label": v[0], "weight": v[1]} for k, v in TIMING_FACTORS.items()],
+        "contexts": [{"key": k, "label": tx["ctx"][k]["label"], "counterpart": tx["ctx"][k]["counterpart"],
+                      "unit": tx["ctx"][k]["unit"]} for k in CTX_CFG],
+        "timing_factors": {
+            ctx: [{"key": key, "label": tx["timing"][ctx][key], "weight": w}
+                  for key, w in TIMING_W[ctx].items()]
+            for ctx in CTX_CFG
+        },
     }
 
 
@@ -82,43 +88,47 @@ async def get_session(sid: str):
 
 MODE_PROMPTS = {
     "script": (
-        "Tulis SKRIP NEGOSIASI lengkap siap pakai dalam Bahasa Indonesia yang natural dan tidak kaku. "
-        "Struktur wajib: (1) PEMBUKAAN — 3-4 kalimat yang bisa diucapkan apa adanya. "
-        "(2) INTI ARGUMEN — susun mengikuti P.A.C.T dengan label yang TEPAT: P = Performance, A = Achievement, "
-        "C = Comparison, T = Timing (jangan pernah mengganti arti huruf-huruf ini). Tiap pilar 2-3 kalimat, "
-        "WAJIB memakai angka nyata dari data user. "
-        "(3) THE ASK — kalimat menyebut anchor number persis, plus instruksi diam setelahnya. "
-        "(4) 4 SKENARIO PENOLAKAN — tiap skenario: apa yang mereka bilang, kenapa mereka bilang itu, dan jawaban kata-per-kata. "
-        "(5) PENUTUP & FOLLOW-UP. Gunakan heading markdown ## dan bullet."
+        "Write a complete, ready-to-speak NEGOTIATION SCRIPT. Required structure: "
+        "(1) OPENING — 3-4 sentences that can be said verbatim. "
+        "(2) CORE ARGUMENT — organised by P.A.C.T with the exact meanings: P = Performance, A = Achievement, "
+        "C = Comparison, T = Timing (never change what these letters stand for). Two to three sentences per pillar, "
+        "always using the real figures from the user's data. "
+        "(3) THE ASK — the sentence stating the exact anchor number, plus the instruction to stay silent afterwards. "
+        "(4) FOUR OBJECTION SCENARIOS — for each: what they say, why they say it, and the word-for-word answer. "
+        "(5) CLOSING & FOLLOW-UP. Use markdown ## headings and bullets."
     ),
     "objections": (
-        "Tulis PLAYBOOK MENGHADAPI PENOLAKAN dalam Bahasa Indonesia. Buat 6 skenario penolakan yang paling mungkin "
-        "berdasarkan konteks dan kelemahan spesifik user. Untuk tiap skenario: kalimat mereka, motif di baliknya, "
-        "jawaban kata-per-kata, dan satu langkah eskalasi kalau mereka masih menolak. Heading markdown ##."
+        "Write an OBJECTION PLAYBOOK. Produce six objections most likely given this user's context and specific "
+        "weaknesses. For each: their sentence, the motive behind it, the word-for-word answer, and one escalation "
+        "step if they still refuse. Use markdown ## headings."
     ),
     "email": (
-        "Tulis 2 versi email dalam Bahasa Indonesia: (1) email meminta jadwal meeting negosiasi (singkat, tidak membocorkan angka), "
-        "(2) email follow-up setelah meeting yang merangkum kesepakatan dan menagih keputusan dengan tenggat halus. "
-        "Sertakan subject line. Heading markdown ##."
+        "Write two emails: (1) requesting a negotiation meeting (short, no numbers disclosed), "
+        "(2) a post-meeting follow-up summarising what was agreed and requesting a decision with a gentle deadline. "
+        "Include subject lines. Use markdown ## headings."
     ),
     "prompt": (
-        "Buat PROMPT SIAP PAKAI dalam Bahasa Indonesia yang bisa user tempel ke AI chatbot lain untuk latihan roleplay "
-        "negosiasi. Prompt harus memuat seluruh konteks user, angka-angkanya, persona lawan bicara yang realistis dan keras, "
-        "aturan roleplay, dan cara memberi feedback di akhir. Bungkus prompt utama dalam code block."
+        "Create a READY-TO-PASTE PROMPT the user can give to another AI chatbot to roleplay this negotiation. "
+        "The prompt must carry the user's full context and numbers, a realistic and tough counterpart persona, "
+        "the roleplay rules, and how to give feedback at the end. Wrap the main prompt in a code block."
     ),
 }
 
 SYSTEM_MSG = (
-    "Kamu adalah negotiation coach senior yang dilatih dengan prinsip Harvard Program on Negotiation "
+    "You are a senior negotiation coach trained in the principles of the Harvard Program on Negotiation "
     "(Getting to Yes, BATNA, ZOPA, anchoring, interest-based bargaining). "
-    "Framework yang dipakai: P.A.C.T = Performance (hasil terukur), Achievement (pencapaian & dampaknya), "
-    "Comparison (pembanding pasar), Timing (momen). Jangan pernah mengubah arti keempat huruf itu. "
-    "Gayamu: langsung, konkret, tidak memotivasi kosong, dan selalu memakai angka nyata dari data user. "
-    "Bahasa Indonesia semi-kasual profesional (pakai 'lo' hanya di narasi coaching, tapi skrip yang diucapkan ke atasan/klien "
-    "harus memakai 'saya' dan sopan). "
-    "Aturan keras: JANGAN mengarang angka yang tidak ada di data. Kalau sebuah data kosong, sebutkan itu sebagai gap dan "
-    "beri cara mengisinya. Jangan memberi nasihat generik seperti 'percaya diri' tanpa langkah konkret."
+    "The framework in use is P.A.C.T = Performance (measurable results), Achievement (accomplishments and their value), "
+    "Comparison (market benchmark), Timing (the moment). Never change what these four letters mean. "
+    "Voice: the calm, precise register of a professional business book — plain words, full sentences, no slang, "
+    "no hype, no motivational filler. Explain the reasoning briefly so a first-time negotiator understands why, "
+    "then give the exact words to say. Scripts addressed to a manager, recruiter, or client must always be polite "
+    "and use the first person. "
+    "Hard rule: never invent a figure that is not in the user's data. If a field is empty, name it as a gap and "
+    "explain how to fill it."
 )
+
+LANG_NAMES = {"id": "Bahasa Indonesia (formal, sopan, seperti buku bisnis profesional)",
+              "en": "English (professional, plain, book-like)"}
 
 
 def _build_context_text(req: AiRequest) -> str:
@@ -126,34 +136,35 @@ def _build_context_text(req: AiRequest) -> str:
     a = req.analysis or {}
     numbers = a.get("numbers", {})
     return json.dumps({
-        "konteks_negosiasi": a.get("context"),
-        "peran": inp.get("role"),
-        "lama_bekerja_bulan": inp.get("tenure_months"),
-        "mata_uang": inp.get("currency"),
-        "nilai_sekarang": inp.get("current_value"),
-        "offer": inp.get("offer_value"),
-        "pasar_p50": inp.get("market_p50"),
-        "pasar_p75": inp.get("market_p75"),
-        "metrik_performance": inp.get("metrics"),
-        "pencapaian": inp.get("achievements"),
-        "catatan_scope": inp.get("scope_growth_note"),
-        "faktor_timing": inp.get("timing_factors"),
-        "alternatif_batna": inp.get("alternatives"),
-        "pentingnya_hubungan_1_5": inp.get("relationship_importance"),
-        "hasil_engine": {
+        "negotiation_context": a.get("context"),
+        "context_key": inp.get("context"),
+        "role": inp.get("role"),
+        "tenure_months": inp.get("tenure_months"),
+        "currency": inp.get("currency"),
+        "current_value": inp.get("current_value"),
+        "offer_value": inp.get("offer_value"),
+        "market_p50": inp.get("market_p50"),
+        "market_p75": inp.get("market_p75"),
+        "performance_metrics": inp.get("metrics"),
+        "achievements": inp.get("achievements"),
+        "scope_note": inp.get("scope_growth_note"),
+        "timing_factors": inp.get("timing_factors"),
+        "batna_alternatives": inp.get("alternatives"),
+        "relationship_importance_1_5": inp.get("relationship_importance"),
+        "engine_output": {
             "leverage_score": a.get("leverage_score"),
             "tier": a.get("tier"),
-            "skor_pact": a.get("pact"),
+            "pact_scores": a.get("pact"),
             "batna": a.get("batna"),
-            "dampak": a.get("impact"),
+            "impact": a.get("impact"),
             "anchor": numbers.get("anchor"),
             "target": numbers.get("target"),
-            "kompromi": numbers.get("compromise"),
+            "compromise": numbers.get("compromise"),
             "walk_away": numbers.get("reservation"),
             "zopa": numbers.get("zopa"),
-            "posisi_pasar": numbers.get("market_position"),
-            "gap": a.get("gaps"),
-            "risiko": a.get("risks"),
+            "market_position": numbers.get("market_position"),
+            "gaps": a.get("gaps"),
+            "risks": a.get("risks"),
         },
     }, ensure_ascii=False)
 
@@ -170,10 +181,12 @@ async def ai_generate(req: AiRequest):
     ).with_model("anthropic", "claude-sonnet-4-6").with_params(max_tokens=2600)
 
     message = UserMessage(
-        text=f"{instruction}\n\nDATA USER & HASIL ENGINE (JSON):\n{_build_context_text(req)}\n\n"
-             f"Semua angka uang ditulis dalam format {req.input.currency} yang mudah dibaca (contoh: Rp 14.500.000).\n"
-             "BATAS PANJANG: maksimal 850 kata. Padat, tanpa pengulangan, tanpa kalimat pembuka basa-basi. "
-             "Langsung mulai dari heading pertama."
+        text=f"{instruction}\n\nUSER DATA & ENGINE OUTPUT (JSON):\n{_build_context_text(req)}\n\n"
+             f"WRITE THE ENTIRE OUTPUT IN: {LANG_NAMES.get(req.input.lang, LANG_NAMES['id'])}. "
+             "Use that language for every word, including headings and labels; the only exceptions are the "
+             "framework terms P.A.C.T, BATNA, and ZOPA.\n"
+             f"Format all money in {req.input.currency} in a readable form (example: Rp 14.500.000).\n"
+             "LENGTH LIMIT: 850 words maximum. Dense, no repetition, no preamble. Start at the first heading."
     )
 
     async def gen():

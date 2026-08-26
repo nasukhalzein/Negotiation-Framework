@@ -2,7 +2,11 @@ export const emptyMetric = () => ({ label: "", baseline: null, result: null, uni
 export const emptyAchievement = () => ({ title: "", impact_value: null, beyond_scope: false, verifiable: false });
 export const emptyAlternative = () => ({ label: "", kind: "offer", value: null, probability: 50, weeks_to_activate: 8, is_active: false });
 
+export const CONTEXT_KEYS = ["salary_raise", "job_offer", "business_deal"];
+export const ALT_KINDS = ["offer", "client", "side_income", "internal_move", "skill", "other"];
+
 export const defaultInput = () => ({
+  lang: "id",
   context: "salary_raise",
   role: "",
   tenure_months: 12,
@@ -21,21 +25,3 @@ export const defaultInput = () => ({
   monthly_expense: null,
   relationship_importance: 3,
 });
-
-export const ALT_KINDS = [
-  { key: "offer", label: "Offer kerja lain" },
-  { key: "client", label: "Klien / project lain" },
-  { key: "side_income", label: "Penghasilan sampingan" },
-  { key: "internal_move", label: "Pindah divisi internal" },
-  { key: "skill", label: "Skill / sertifikasi baru" },
-  { key: "other", label: "Lainnya" },
-];
-
-export const STEPS = [
-  { key: "context", label: "Konteks", code: "00" },
-  { key: "performance", label: "Performance", code: "P" },
-  { key: "achievement", label: "Achievement", code: "A" },
-  { key: "comparison", label: "Comparison", code: "C" },
-  { key: "timing", label: "Timing", code: "T" },
-  { key: "batna", label: "BATNA", code: "B" },
-];

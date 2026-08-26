@@ -1,16 +1,18 @@
 import React from "react";
 import { RotateCcw, ArrowRight, ArrowLeft } from "lucide-react";
-import { STEPS } from "../lib/schema";
+import { useLang, fill } from "../i18n";
 import { ContextStep, PerformanceStep, AchievementStep, ComparisonStep, TimingStep, BatnaStep } from "./Steps";
 
-export const Builder = ({ input, analysis, step, setStep, handlers, onReset, filled }) => {
-  const props = { input, ...handlers };
+export const Builder = ({ input, analysis, step, setStep, handlers, onReset, filled, timing }) => {
+  const { t } = useLang();
+  const b = t.builder;
+  const props = { input, t, ...handlers };
   const view = [
     <ContextStep {...props} />,
     <PerformanceStep {...props} />,
     <AchievementStep {...props} />,
     <ComparisonStep {...props} />,
-    <TimingStep {...props} />,
+    <TimingStep {...props} timing={timing} />,
     <BatnaStep {...props} />,
   ][step];
 
@@ -27,26 +29,23 @@ export const Builder = ({ input, analysis, step, setStep, handlers, onReset, fil
       <div className="max-w-[1400px] mx-auto px-5 md:px-10 py-20 md:py-24">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
-            <div className="eyebrow">04 · Framework Builder</div>
-            <h2 className="font-display text-3xl md:text-4xl tracking-tighter mt-5">Isi kondisi lo yang sebenarnya</h2>
-            <p className="text-sm text-neutral-400 mt-4 max-w-2xl leading-relaxed">
-              Skor bergerak setiap kali lo mengisi. Tidak perlu sempurna — engine akan menunjukkan
-              apa yang kurang dan berapa poin yang bisa lo dapat kalau melengkapinya.
-            </p>
+            <div className="eyebrow">{b.eyebrow}</div>
+            <h2 className="font-display text-3xl md:text-4xl tracking-tighter mt-5">{b.title}</h2>
+            <p className="text-sm text-neutral-400 mt-4 max-w-2xl leading-relaxed">{b.sub}</p>
           </div>
           <div className="flex items-center gap-3">
             <div className="text-right">
-              <div className="eyebrow">Leverage</div>
+              <div className="eyebrow">{b.leverage}</div>
               <div className="font-mono text-2xl text-brand-red mt-1" data-testid="builder-score">{analysis?.leverage_score ?? 0}</div>
             </div>
             <button data-testid="reset-btn" onClick={onReset} className="btn-ghost inline-flex items-center gap-2">
-              <RotateCcw size={13} strokeWidth={1.5} /> Reset
+              <RotateCcw size={13} strokeWidth={1.5} /> {b.reset}
             </button>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-px bg-brand-line mt-12">
-          {STEPS.map((s, i) => (
+          {b.steps.map((s, i) => (
             <button
               key={s.key}
               data-testid={`step-${s.key}`}
@@ -67,7 +66,7 @@ export const Builder = ({ input, analysis, step, setStep, handlers, onReset, fil
         </div>
 
         <div className="border border-brand-line border-t-0 bg-[#0f0f0f] p-6 md:p-10">
-          <div key={step} className="animate-rise">{view}</div>
+          <div key={`${step}-${input.context}`} className="animate-rise">{view}</div>
 
           <div className="hairline my-10" />
 
@@ -78,16 +77,16 @@ export const Builder = ({ input, analysis, step, setStep, handlers, onReset, fil
               disabled={step === 0}
               className="btn-ghost inline-flex items-center gap-2 disabled:opacity-30"
             >
-              <ArrowLeft size={13} strokeWidth={1.5} /> Sebelumnya
+              <ArrowLeft size={13} strokeWidth={1.5} /> {b.prev}
             </button>
 
             <div className="font-mono text-[0.68rem] text-neutral-500 tracking-widest">
-              LANGKAH {step + 1} / {STEPS.length}
+              {fill(b.stepOf, { n: step + 1, total: b.steps.length })}
             </div>
 
-            {step < STEPS.length - 1 ? (
+            {step < b.steps.length - 1 ? (
               <button data-testid="next-step-btn" onClick={() => setStep(step + 1)} className="btn-red inline-flex items-center gap-2">
-                Lanjut <ArrowRight size={13} strokeWidth={2} />
+                {b.next} <ArrowRight size={13} strokeWidth={2} />
               </button>
             ) : (
               <button
@@ -95,16 +94,12 @@ export const Builder = ({ input, analysis, step, setStep, handlers, onReset, fil
                 onClick={() => document.getElementById("hasil")?.scrollIntoView({ behavior: "smooth" })}
                 className="btn-red inline-flex items-center gap-2"
               >
-                Lihat Hasil Lengkap <ArrowRight size={13} strokeWidth={2} />
+                {b.seeResult} <ArrowRight size={13} strokeWidth={2} />
               </button>
             )}
           </div>
 
-          {!filled && (
-            <p className="font-mono text-[0.68rem] text-neutral-500 mt-6">
-              Minimal isi <span className="text-brand-red">nilai sekarang</span> di langkah Konteks supaya angka anchor & walk-away bisa dihitung.
-            </p>
-          )}
+          {!filled && <p className="font-mono text-[0.68rem] text-neutral-500 mt-6">{b.minHint}</p>}
         </div>
       </div>
     </section>

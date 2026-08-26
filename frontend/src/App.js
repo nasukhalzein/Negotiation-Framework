@@ -1,16 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Toaster, toast } from "sonner";import { Nav } from "@/components/Nav";
+import { Toaster, toast } from "sonner";
+import { Nav } from "@/components/Nav";
 import { Hero } from "@/components/Hero";
 import { Learn } from "@/components/Learn";
 import { Builder } from "@/components/Builder";
 import { Results } from "@/components/Results";
 import { AiPanel } from "@/components/AiPanel";
 import { defaultInput } from "@/lib/schema";
-import { analyzeInput } from "@/lib/api";
+import { analyzeInput, getMeta } from "@/lib/api";
 import { money } from "@/lib/format";
 import { copyText } from "@/lib/clipboard";
+import { LangProvider, useLang } from "@/i18n";
 
-const STORAGE_KEY = "conceptor_pact_input_v1";
+const STORAGE_KEY = "conceptor_pact_input_v2";
 
 function loadInput() {
   try {
@@ -22,48 +24,52 @@ function loadInput() {
   return defaultInput();
 }
 
-function scriptToText(analysis, currency) {
+function scriptToText(analysis, currency, r) {
   const s = analysis.script;
   const n = analysis.numbers;
   return [
-    `SKRIP NEGOSIASI — ${analysis.context}`,
-    `Leverage Score: ${analysis.leverage_score}/100 (${analysis.tier.label})`,
+    `${analysis.context} — ${analysis.tier.label} (${analysis.leverage_score}/100)`,
     n.available
-      ? `Anchor ${money(n.anchor, currency)} · Target ${money(n.target, currency)} · Walk-away ${money(n.reservation, currency)}`
+      ? `${r.anchor}: ${money(n.anchor, currency)} · ${r.target}: ${money(n.target, currency)} · ${r.walkaway}: ${money(n.reservation, currency)}`
       : "",
     "",
-    "PEMBUKAAN",
+    r.opening.toUpperCase(),
     s.opening,
     "",
-    "INTI ARGUMEN",
+    r.core.toUpperCase(),
     ...s.body.map((b, i) => `${i + 1}. ${b}`),
     "",
-    "THE ASK",
+    r.ask.toUpperCase(),
     s.ask,
     s.silence_rule,
     "",
-    "KALAU DITOLAK",
+    r.objections.toUpperCase(),
     ...s.objections.map((o) => `${o.objection}\n→ ${o.response}\n`),
-    "PENUTUP",
+    r.closing.toUpperCase(),
     s.closing,
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-export default function App() {
+function Page() {
+  const { lang, t } = useLang();
   const [input, setInput] = useState(loadInput);
   const [analysis, setAnalysis] = useState(null);
   const [step, setStep] = useState(0);
+  const [timing, setTiming] = useState({});
   const timer = useRef(null);
+
+  useEffect(() => {
+    setInput((p) => ({ ...p, lang }));
+    getMeta(lang).then((m) => setTiming(m.timing_factors)).catch(() => {});
+  }, [lang]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(input));
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      analyzeInput(input)
-        .then(setAnalysis)
-        .catch(() => {});
+      analyzeInput(input).then(setAnalysis).catch(() => {});
     }, 400);
     return () => timer.current && clearTimeout(timer.current);
   }, [input]);
@@ -83,9 +89,9 @@ export default function App() {
   );
 
   const onReset = () => {
-    setInput(defaultInput());
+    setInput({ ...defaultInput(), lang });
     setStep(0);
-    toast.success("Framework direset");
+    toast.success(t.builder.reset);
   };
 
   const filled = Boolean(input.current_value || input.offer_value);
@@ -102,27 +108,23 @@ export default function App() {
         step={step}
         setStep={setStep}
         filled={filled}
+        timing={timing[input.context] || []}
         handlers={{ set, setList, addRow, removeRow }}
         onReset={onReset}
       />
 
       <section className="border-b border-brand-line bg-[#0c0c0c]">
         <div className="max-w-[1400px] mx-auto px-5 md:px-10 py-20 md:py-24">
-          <div className="eyebrow">05 · Hasil Dinamis</div>
-          <h2 className="font-display text-3xl md:text-4xl tracking-tighter mt-5">
-            Output konkret dari kondisi lo, bukan template
-          </h2>
-          <p className="text-sm text-neutral-400 mt-5 max-w-2xl leading-relaxed">
-            Semua angka di bawah dihitung ulang setiap kali lo mengubah input — termasuk anchor,
-            titik walk-away dari BATNA, dan zona kesepakatan.
-          </p>
+          <div className="eyebrow">{t.results.eyebrow}</div>
+          <h2 className="font-display text-3xl md:text-4xl tracking-tighter mt-5">{t.results.title}</h2>
+          <p className="text-sm text-neutral-400 mt-5 max-w-2xl leading-relaxed">{t.results.sub}</p>
           <div className="mt-12">
             <Results
               analysis={analysis}
               currency={input.currency}
               onCopy={async () => {
-                const ok = await copyText(scriptToText(analysis, input.currency));
-                ok ? toast.success("Skrip tersalin ke clipboard") : toast.error("Browser menolak akses clipboard");
+                const ok = await copyText(scriptToText(analysis, input.currency, t.results));
+                ok ? toast.success(t.results.copied) : toast.error(t.results.copyFail);
               }}
             />
           </div>
@@ -134,17 +136,20 @@ export default function App() {
       <footer className="border-t border-brand-line">
         <div className="max-w-[1400px] mx-auto px-5 md:px-10 py-12 flex flex-wrap items-center justify-between gap-6">
           <div>
-            <div className="font-display text-lg tracking-tight">CONCEPTOR</div>
-            <p className="font-mono text-[0.65rem] text-neutral-600 mt-2">
-              P.A.C.T × BATNA — berbasis prinsip Harvard Program on Negotiation
-            </p>
+            <img src="/logo.png" alt="CONCEPTOR" className="h-5 w-auto" />
+            <p className="font-mono text-[0.65rem] text-neutral-600 mt-3">{t.footer.tagline}</p>
           </div>
-          <p className="font-mono text-[0.65rem] text-neutral-600 max-w-md leading-relaxed">
-            Data lo disimpan di browser sendiri. Angka pasar adalah estimasi — selalu verifikasi
-            dengan sumber terbaru sebelum negosiasi.
-          </p>
+          <p className="font-mono text-[0.65rem] text-neutral-600 max-w-md leading-relaxed">{t.footer.note}</p>
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <LangProvider>
+      <Page />
+    </LangProvider>
   );
 }
